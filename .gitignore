@@ -1,0 +1,29 @@
+# Python cache - never commit these
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Python egg/build artifacts
+*.egg-info/
+dist/
+build/
+
+# Environment variables - never commit API keys
+.env
+.env.local
+
+# VS Code settings
+.vscode/
+
+# Mac junk
+.DS_Store
+
+# yfinance cache
+*.json~
