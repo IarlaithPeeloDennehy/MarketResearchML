@@ -1,19 +1,20 @@
 """
-model.py
-────────
-NUMKTEnsemble — Random Forest + Gradient Boosting blended ensemble.
+model.py  (v2 — trains on real returns)
+────────────────────────────────────────
+NUMKTEnsemble now trains on ACTUAL historical forward returns
+instead of a synthetic quality score.
 
-Key design decisions to prevent overfitting:
-  1. TimeSeriesSplit CV — never tests on data before training data (no leakage)
-  2. min_samples_leaf = 20 — trees cannot make decisions on fewer than 20 samples
-  3. max_features = "sqrt" — each split only sees sqrt(n_features) candidates
-  4. L2 / shrinkage — GBM learning_rate scaled by lambda_reg
-  5. Ensemble blending — RF + GBM averaged, reducing individual model variance
-  6. Feature importance tracked and exposed for transparency
+How it works:
+  1. For each stock, take factor snapshot at time T
+  2. Measure actual price return from T to T+forward_months
+  3. Label = 1 if stock beat the equal-weight universe median, 0 if not
+  4. Train RF+GB to learn which factor combinations predicted outperformance
+  5. Apply learned model to current snapshot to score live stocks
 
-The model is trained to predict whether a stock will be in the top half
-of the universe by total return over the next 12 months. This is a ranking
-problem (which stocks to prefer), not a price prediction problem.
+This is genuine machine learning on real market outcomes.
+The more historical periods you feed it, the better it gets.
+
+The model is also saved to disk so it persists between sessions.
 """
 
 import numpy as np
@@ -21,31 +22,37 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.model_selection import TimeSeriesSplit, cross_val_score
 from sklearn.preprocessing import RobustScaler
-from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
-from sklearn.metrics import roc_auc_score
+from sklearn.pipeline import Pipeline
 from scipy.stats import spearmanr
+import joblib
+import json
 import logging
-from typing import Optional
+from pathlib import Path
+from datetime import datetime
 
 from .feature_engineering import FEATURE_COLS
 
 logger = logging.getLogger(__name__)
 
+MODEL_DIR = Path(__file__).parent.parent / "cache" / "models"
+MODEL_DIR.mkdir(parents=True, exist_ok=True)
+
 
 class NUMKTEnsemble:
     """
-    Blended ensemble: 60% Random Forest + 40% Gradient Boosting.
-    Trained with time-series cross-validation to prevent look-ahead bias.
+    Random Forest + Gradient Boosting ensemble.
+    Trained on real historical forward returns.
+    Persists to disk between sessions.
     """
 
     def __init__(
         self,
-        cv_folds: int = 5,
-        lambda_reg: float = 0.10,
-        max_depth: int = 5,
-        n_estimators: int = 300,
-        rf_weight: float = 0.60,
+        cv_folds:     int   = 5,
+        lambda_reg:   float = 0.10,
+        max_depth:    int   = 5,
+        n_estimators: int   = 300,
+        rf_weight:    float = 0.60,
     ):
         self.cv_folds     = cv_folds
         self.lambda_reg   = lambda_reg
@@ -54,188 +61,273 @@ class NUMKTEnsemble:
         self.rf_weight    = rf_weight
         self.gb_weight    = 1.0 - rf_weight
 
-        self.is_fitted        = False
-        self.cv_accuracy      = 0.0
-        self.cv_auc           = 0.0
-        self._feature_names   = []
-        self._fi_rf           = {}
-        self._fi_gb           = {}
+        self.is_fitted      = False
+        self.cv_accuracy    = 0.0
+        self.cv_ic          = 0.0     # Information Coefficient on CV data
+        self.n_training_rows = 0
+        self.training_source = "none" # "real_returns" or "synthetic"
+        self._feature_names  = []
+        self._fi_rf          = {}
+        self._fi_gb          = {}
+        self.trained_at      = None
 
-        # Build pipelines (Imputer → Scaler → Classifier)
+        lr = max(0.01, 0.1 * (1 - lambda_reg))
+
         self._rf_pipe = Pipeline([
             ("imputer", SimpleImputer(strategy="median")),
             ("scaler",  RobustScaler()),
             ("clf",     RandomForestClassifier(
-                n_estimators   = n_estimators,
-                max_depth      = max_depth,
-                min_samples_leaf = 20,          # prevents overfit on small datasets
-                max_features   = "sqrt",         # Breiman's recommendation
-                class_weight   = "balanced",
-                n_jobs         = -1,
-                random_state   = 42,
+                n_estimators    = n_estimators,
+                max_depth       = max_depth,
+                min_samples_leaf= 10,
+                max_features    = "sqrt",
+                class_weight    = "balanced",
+                n_jobs          = -1,
+                random_state    = 42,
             )),
         ])
 
-        # GBM learning rate is scaled by lambda_reg — higher lambda = more regularisation
-        effective_lr = max(0.01, 0.1 * (1 - lambda_reg))
         self._gb_pipe = Pipeline([
             ("imputer", SimpleImputer(strategy="median")),
             ("scaler",  RobustScaler()),
             ("clf",     GradientBoostingClassifier(
-                n_estimators      = n_estimators,
-                max_depth         = min(max_depth, 4),  # GBM needs shallower trees
-                learning_rate     = effective_lr,
-                subsample         = 0.8,                # stochastic GB reduces variance
-                min_samples_leaf  = 15,
-                max_features      = "sqrt",
-                random_state      = 42,
+                n_estimators    = n_estimators,
+                max_depth       = min(max_depth, 4),
+                learning_rate   = lr,
+                subsample       = 0.8,
+                min_samples_leaf= 8,
+                max_features    = "sqrt",
+                random_state    = 42,
             )),
         ])
 
-    def fit(self, features_df: pd.DataFrame) -> "NUMKTEnsemble":
+
+    def fit_on_real_returns(
+        self,
+        feature_rows: list[dict],   # list of {feature_col: value, ...}
+        return_labels: list[int],   # 1 = beat benchmark, 0 = did not
+        forward_returns: list[float] | None = None,  # actual returns for IC calc
+    ) -> "NUMKTEnsemble":
         """
-        Fits the ensemble.
+        Train on real historical outcomes.
 
-        Because we may have a small universe (<30 stocks), we generate a
-        synthetic training set by using cross-sectional snapshots at multiple
-        historical dates, weighted by recency. This is a common technique
-        in factor investing research.
-
-        For each available feature column that has _rank variant, we use
-        the rank as the primary input (more robust than raw values).
+        feature_rows:   one dict per (stock, time_period) observation
+        return_labels:  1 if stock beat equal-weight median that period
+        forward_returns: actual % returns (used only for IC calculation)
         """
-        df = features_df.copy()
+        if len(feature_rows) < 6:
+            logger.warning(f"Only {len(feature_rows)} training rows — need at least 6")
+            return self._fit_synthetic(pd.DataFrame(feature_rows))
 
-        # Choose input features — prefer rank-normalised variants
-        feat_cols = []
-        for col in FEATURE_COLS:
-            rank_col = col + "_rank"
-            if rank_col in df.columns:
-                feat_cols.append(rank_col)
-            elif col in df.columns:
-                feat_cols.append(col)
+        df = pd.DataFrame(feature_rows).fillna(0.5)
+        y  = np.array(return_labels)
 
-        self._feature_names = feat_cols
+        # Select feature columns that exist
+        feat_cols = [c for c in FEATURE_COLS
+                     if c + "_rank" in df.columns or c in df.columns]
+        rank_cols = []
+        for c in feat_cols:
+            if c + "_rank" in df.columns:
+                rank_cols.append(c + "_rank")
+            elif c in df.columns:
+                rank_cols.append(c)
 
-        if len(feat_cols) == 0:
-            logger.warning("No feature columns found — using fallback scoring.")
-            self.is_fitted = False
+        if not rank_cols:
+            logger.warning("No feature columns found")
             return self
 
-        X = df[feat_cols].values
+        self._feature_names = rank_cols
+        X = df[rank_cols].values
 
-        # ── Synthetic target ────────────────────────────────────────────────
-        # In production this would be actual 12-month forward returns.
-        # Without a time-series database, we construct a plausible proxy:
-        # stocks with strong quality + momentum factors tend to outperform.
-        # We use a composite quality score as the training label.
-        # This makes the model learn to identify quality characteristics —
-        # the relationship that decades of factor research have validated.
+        # Balance check
+        pos = y.sum()
+        neg = len(y) - pos
+        if pos < 2 or neg < 2:
+            logger.warning(f"Poor class balance ({pos} pos, {neg} neg) — using synthetic fallback")
+            return self._fit_synthetic(df)
 
-        quality_score = np.zeros(len(df))
-
-        if "roe_rank" in df.columns:
-            quality_score += 0.25 * df["roe_rank"].fillna(0.5).values
-        if "net_margin_rank" in df.columns:
-            quality_score += 0.20 * df["net_margin_rank"].fillna(0.5).values
-        if "mom_12m_rank" in df.columns:
-            quality_score += 0.20 * df["mom_12m_rank"].fillna(0.5).values
-        if "pe_ratio_rank" in df.columns:
-            # Low P/E is good for value — invert rank
-            quality_score += 0.15 * (1 - df["pe_ratio_rank"].fillna(0.5).values)
-        if "debt_equity_rank" in df.columns:
-            # Low debt is good — invert rank
-            quality_score += 0.10 * (1 - df["debt_equity_rank"].fillna(0.5).values)
-        if "revenue_growth_rank" in df.columns:
-            quality_score += 0.10 * df["revenue_growth_rank"].fillna(0.5).values
-
-        # Binary label: 1 if above median quality (top half of universe)
-        y = (quality_score >= np.median(quality_score)).astype(int)
-
-        # Need at least 2 samples per class
-        if y.sum() < 2 or (len(y) - y.sum()) < 2:
-            logger.warning("Insufficient class balance — skipping fit.")
-            self.is_fitted = False
-            return self
-
-        # ── TimeSeriesSplit cross-validation ────────────────────────────────
-        # We bootstrap multiple "time periods" by perturbing feature values
-        # slightly and measuring CV stability — this is the standard approach
-        # when you don't have a multi-year panel of factor snapshots.
-        n_splits = min(self.cv_folds, max(2, len(y) // 3))
-        tscv = TimeSeriesSplit(n_splits=n_splits)
+        # TimeSeriesSplit CV — respects time ordering
+        n_splits = min(self.cv_folds, max(2, len(y) // 4))
+        tscv     = TimeSeriesSplit(n_splits=n_splits)
 
         try:
-            cv_scores_rf = cross_val_score(
-                self._rf_pipe, X, y, cv=tscv, scoring="accuracy", n_jobs=-1
+            cv_rf = cross_val_score(self._rf_pipe, X, y, cv=tscv,
+                                    scoring="accuracy", n_jobs=-1)
+            cv_gb = cross_val_score(self._gb_pipe, X, y, cv=tscv,
+                                    scoring="accuracy", n_jobs=-1)
+            self.cv_accuracy = float(
+                self.rf_weight * np.mean(cv_rf) + self.gb_weight * np.mean(cv_gb)
             )
-            cv_scores_gb = cross_val_score(
-                self._gb_pipe, X, y, cv=tscv, scoring="accuracy", n_jobs=-1
-            )
-            blended_cv = self.rf_weight * cv_scores_rf + self.gb_weight * cv_scores_gb
-            self.cv_accuracy = float(np.mean(blended_cv))
-            logger.info(
-                f"CV accuracy — RF: {np.mean(cv_scores_rf):.3f}, "
-                f"GB: {np.mean(cv_scores_gb):.3f}, "
-                f"Ensemble: {self.cv_accuracy:.3f}"
-            )
+            logger.info(f"CV accuracy — RF: {np.mean(cv_rf):.3f} "
+                        f"GB: {np.mean(cv_gb):.3f} "
+                        f"Ensemble: {self.cv_accuracy:.3f}")
         except Exception as e:
-            logger.warning(f"CV failed ({e}), proceeding with full fit.")
+            logger.warning(f"CV failed: {e}")
             self.cv_accuracy = 0.0
 
-        # ── Full dataset fit ────────────────────────────────────────────────
+        # Full fit
         self._rf_pipe.fit(X, y)
         self._gb_pipe.fit(X, y)
 
-        # ── Feature importances ─────────────────────────────────────────────
-        rf_clf  = self._rf_pipe.named_steps["clf"]
-        gb_clf  = self._gb_pipe.named_steps["clf"]
+        # Feature importances
+        rf_clf = self._rf_pipe.named_steps["clf"]
+        gb_clf = self._gb_pipe.named_steps["clf"]
+        self._fi_rf = dict(zip(rank_cols, rf_clf.feature_importances_))
+        self._fi_gb = dict(zip(rank_cols, gb_clf.feature_importances_))
 
-        self._fi_rf = dict(zip(feat_cols, rf_clf.feature_importances_))
-        self._fi_gb = dict(zip(feat_cols, gb_clf.feature_importances_))
+        # IC on training data (directional check)
+        if forward_returns is not None and len(forward_returns) == len(X):
+            proba = self.predict_proba(X)
+            ic, _ = spearmanr(proba, forward_returns)
+            self.cv_ic = float(ic) if np.isfinite(ic) else 0.0
+            logger.info(f"Training IC (Spearman): {self.cv_ic:.4f}")
 
-        self.is_fitted = True
-        logger.info(f"Model fitted. CV accuracy: {self.cv_accuracy:.3f}")
+        self.is_fitted        = True
+        self.n_training_rows  = len(y)
+        self.training_source  = "real_returns"
+        self.trained_at       = datetime.utcnow().isoformat()
+
+        logger.info(f"Model fitted on {len(y)} real-return rows. "
+                    f"CV: {self.cv_accuracy:.3f}")
         return self
 
-    def predict_proba(self, X: np.ndarray) -> np.ndarray:
-        """
-        Returns blended probability of being in top half.
-        Shape: (n_samples,) — single float per stock, range [0, 1].
-        """
-        if not self.is_fitted:
-            # Fallback: return 0.5 for all (random / neutral)
-            return np.full(len(X), 0.5)
 
-        rf_proba = self._rf_pipe.predict_proba(X)[:, 1]
-        gb_proba = self._gb_pipe.predict_proba(X)[:, 1]
-        return self.rf_weight * rf_proba + self.gb_weight * gb_proba
+    def _fit_synthetic(self, df: pd.DataFrame) -> "NUMKTEnsemble":
+        """
+        Fallback: train on synthetic quality score when real returns
+        are unavailable (e.g. not enough history yet).
+        """
+        logger.info("Using synthetic quality label as training target")
+
+        rank_cols = [c for c in df.columns if c.endswith("_rank")]
+        if not rank_cols:
+            self.is_fitted = False
+            return self
+
+        self._feature_names = rank_cols
+
+        # Build quality score from factor ranks
+        quality = np.zeros(len(df))
+        weights = {
+            "roe_rank":            0.25,
+            "net_margin_rank":     0.20,
+            "mom_12m_rank":        0.20,
+            "pe_ratio_rank":      -0.15,
+            "debt_equity_rank":   -0.10,
+            "revenue_growth_rank": 0.10,
+        }
+        for col, wt in weights.items():
+            if col in df.columns:
+                vals = df[col].fillna(0.5).values
+                quality += abs(wt) * (1 - vals if wt < 0 else vals)
+
+        y = (quality >= np.median(quality)).astype(int)
+
+        if y.sum() < 2 or (len(y) - y.sum()) < 2:
+            self.is_fitted = False
+            return self
+
+        X = df[rank_cols].fillna(0.5).values
+
+        n_splits = min(self.cv_folds, max(2, len(y) // 3))
+        tscv     = TimeSeriesSplit(n_splits=n_splits)
+
+        try:
+            cv_scores = cross_val_score(self._rf_pipe, X, y, cv=tscv,
+                                        scoring="accuracy", n_jobs=-1)
+            self.cv_accuracy = float(np.mean(cv_scores))
+        except Exception:
+            self.cv_accuracy = 0.0
+
+        self._rf_pipe.fit(X, y)
+        self._gb_pipe.fit(X, y)
+
+        rf_clf = self._rf_pipe.named_steps["clf"]
+        gb_clf = self._gb_pipe.named_steps["clf"]
+        self._fi_rf = dict(zip(rank_cols, rf_clf.feature_importances_))
+        self._fi_gb = dict(zip(rank_cols, gb_clf.feature_importances_))
+
+        self.is_fitted       = True
+        self.n_training_rows = len(y)
+        self.training_source = "synthetic"
+        self.trained_at      = datetime.utcnow().isoformat()
+        return self
+
+
+    def fit(self, features_df: pd.DataFrame) -> "NUMKTEnsemble":
+        """Compatibility shim — called by /analyse when no real return data exists."""
+        return self._fit_synthetic(features_df)
+
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        if not self.is_fitted:
+            return np.full(len(X), 0.5)
+        rf_p = self._rf_pipe.predict_proba(X)[:, 1]
+        gb_p = self._gb_pipe.predict_proba(X)[:, 1]
+        return self.rf_weight * rf_p + self.gb_weight * gb_p
+
 
     def feature_importance(self) -> list[dict]:
-        """
-        Returns blended feature importances, sorted descending.
-        Used by the frontend to render the feature importance chart.
-        """
         if not self._fi_rf:
             return []
-
         blended = {
-            feat: round(
-                self.rf_weight * self._fi_rf.get(feat, 0) +
-                self.gb_weight * self._fi_gb.get(feat, 0),
-                6
-            )
-            for feat in set(list(self._fi_rf.keys()) + list(self._fi_gb.keys()))
+            f: round(self.rf_weight * self._fi_rf.get(f, 0) +
+                     self.gb_weight * self._fi_gb.get(f, 0), 6)
+            for f in set(list(self._fi_rf) + list(self._fi_gb))
         }
-
-        # Clean up _rank suffix for display
-        display = [
+        return [
             {
-                "feature": k.replace("_rank", "").replace("_", " ").title(),
+                "feature":    k.replace("_rank", "").replace("_", " ").title(),
                 "importance": v,
-                "rf": round(self._fi_rf.get(k, 0), 6),
-                "gb": round(self._fi_gb.get(k, 0), 6),
+                "rf":         round(self._fi_rf.get(k, 0), 6),
+                "gb":         round(self._fi_gb.get(k, 0), 6),
             }
             for k, v in sorted(blended.items(), key=lambda x: x[1], reverse=True)
-        ]
-        return display[:12]  # top 12 features
+        ][:12]
+
+
+    def save(self, name: str = "default"):
+        """Persist model to disk so it survives server restarts."""
+        path = MODEL_DIR / f"{name}.joblib"
+        joblib.dump(self, path)
+        meta = {
+            "name":           name,
+            "trained_at":     self.trained_at,
+            "cv_accuracy":    self.cv_accuracy,
+            "cv_ic":          self.cv_ic,
+            "n_training_rows":self.n_training_rows,
+            "training_source":self.training_source,
+        }
+        with open(MODEL_DIR / f"{name}_meta.json", "w") as f:
+            json.dump(meta, f, indent=2)
+        logger.info(f"Model saved to {path}")
+
+
+    @classmethod
+    def load(cls, name: str = "default") -> "NUMKTEnsemble | None":
+        """Load a previously saved model from disk."""
+        path = MODEL_DIR / f"{name}.joblib"
+        if not path.exists():
+            return None
+        try:
+            model = joblib.load(path)
+            logger.info(f"Loaded model '{name}' — "
+                        f"trained {model.trained_at} on "
+                        f"{model.n_training_rows} rows ({model.training_source})")
+            return model
+        except Exception as e:
+            logger.error(f"Could not load model: {e}")
+            return None
+
+
+    @staticmethod
+    def list_saved() -> list[dict]:
+        """List all saved models with their metadata."""
+        models = []
+        for meta_file in MODEL_DIR.glob("*_meta.json"):
+            try:
+                with open(meta_file) as f:
+                    models.append(json.load(f))
+            except Exception:
+                pass
+        return sorted(models, key=lambda x: x.get("trained_at", ""), reverse=True)

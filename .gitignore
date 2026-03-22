@@ -27,3 +27,12 @@ build/
 
 # yfinance cache
 *.json~
+
+# Cache folder — rebuilds automatically, never commit
+backend/cache/
+
+# Trained model files
+*.joblib
+
+# Parquet price data files
+*.parquet
