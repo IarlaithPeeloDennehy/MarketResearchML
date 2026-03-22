@@ -536,7 +536,7 @@ const HF_DATA={
 };
 
 let activeMkt='US';
-let selectedTickers=new Set(['AAPL','MSFT','NVDA','JPM','BRK.B','META','JNJ','PG','SHEL.L','AZN.L','CRH','AIB.IR','RYA']);
+let selectedTickers=new Set(['AAPL','MSFT','NVDA','JPM','BRK.B','META','JNJ','PG','SHEL.L','AZN.L','CRH','AIBG.IR','RYAAY']);
 let charts={};
 let runResults=null;
 
@@ -1090,8 +1090,10 @@ function renderCharts(scored,profileKey,backendFI){
 
 /* ── DETAIL PANEL ── */
 function openDetail(ticker){
-  const s=ALL_STOCKS.find(x=>x.t===ticker);
   const r=runResults&&runResults.scored.find(x=>x.t===ticker);
+  // Use live backend data if available, fall back to static data
+  const staticS=ALL_STOCKS.find(x=>x.t===ticker)||{};
+  const s={...staticS,...(r||{})};
   if(!s)return;
 
   const score=r?(r.score*100).toFixed(0):'—';
@@ -1099,7 +1101,8 @@ function openDetail(ticker){
   const mc=s.m==='US'?'mkt-us':s.m==='UK'?'mkt-uk':'mkt-ie';
   const buy=isBuy(signal);
   const hfd=HF_DATA[s.s];
-  const priceStr=(s.m==='UK'?'£':'')+(s.m==='US'?'$':'')+(s.m==='IE'?'€':'')+s.p.toLocaleString();
+  const livePrice=r&&r.p?r.p:s.p;
+  const priceStr=(s.m==='UK'?'£':'')+(s.m==='US'?'$':'')+(s.m==='IE'?'€':'')+livePrice.toLocaleString();
 
   /* verdict */
   const vClass=buy?'v-buy':signal==='HOLD'?'v-hold':'v-sell';
@@ -1176,7 +1179,7 @@ function openDetail(ticker){
     <div class="dp-section">
       <div class="dp-stitle">Key Fundamentals</div>
       <table class="dp-table">
-        <tr><td>Price</td><td>${priceStr}</td></tr>
+        <tr><td>Price</td><td>${priceStr}${r&&r.isLive?'<span style="font-size:9px;color:var(--teal);margin-left:5px">● live</span>':''}</td></tr>
         <tr><td>Market Cap</td><td>${s.mc?'$'+s.mc+'bn':'—'}</td></tr>
         <tr><td>P/E Ratio</td><td>${s.pe>90?'N/A':s.pe+'x'}</td></tr>
         <tr><td>P/B Ratio</td><td>${s.pb}x</td></tr>
