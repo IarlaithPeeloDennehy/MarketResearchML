@@ -1,39 +1,12 @@
 # NUMKT ML Backend
 
-Real Python ML backend for the NUMKT multi-market stock analyser.
 
-Fetches live data from Yahoo Finance, trains a Random Forest + Gradient
-Boosting ensemble with proper TimeSeriesSplit cross-validation, and
-returns scored BUY/HOLD/SELL signals with industry-standard backtest metrics.
 
----
-
-## How it connects to your GitHub Pages frontend
-
-```
-GitHub Pages          Railway (this repo)       Yahoo Finance
-NUMKT.html      →     /analyse   (FastAPI)  →   yfinance (free)
-                →     /backtest
-                ←     JSON signals + metrics
-```
-
-Your HTML already has everything wired up. You just need to:
-1. Deploy this backend to Railway
-2. Paste the Railway URL into NUMKT.html (one line change)
-
----
-
-## Step 1 — Add this backend to your existing GitHub repo
-
-You have two choices:
-
-### Option A — Same repo as your frontend (recommended)
-Put the backend in a subfolder of your existing repo:
 
 ```
 your-github-repo/
-├── NUMKT.html          ← your existing frontend (GitHub Pages serves this)
-├── backend/            ← add this folder
+├── index.html          
+├── backend/            
 │   ├── main.py
 │   ├── requirements.txt
 │   ├── Procfile
@@ -47,82 +20,12 @@ your-github-repo/
 │       └── backtest.py
 ```
 
-Copy the contents of this zip into a `backend/` folder in your repo,
-commit and push to GitHub.
 
-### Option B — Separate repo
-Create a new GitHub repo just for the backend and push these files to it.
-Railway can deploy from either repo.
+
+
 
 ---
 
-## Step 2 — Deploy to Railway (free tier)
-
-Railway gives you 500 free hours/month — enough for personal use.
-
-1. Go to **railway.app** and sign up (use "Sign in with GitHub")
-
-2. Click **New Project** → **Deploy from GitHub repo**
-
-3. Select your repo (and set the **Root Directory** to `backend/`
-   if you used Option A above)
-
-4. Railway auto-detects the Procfile and starts deploying
-
-5. Once deployed, click your service → **Settings** → **Networking**
-   → **Generate Domain**. Copy the URL — it looks like:
-   `https://numkt-backend-production.up.railway.app`
-
----
-
-## Step 3 — Connect frontend to backend (one line)
-
-Open **NUMKT.html** in your editor. Near the top of the `<script>` block, find:
-
-```javascript
-const BACKEND_URL = ''; // replace with Railway URL after deploy
-```
-
-Replace with your Railway URL:
-
-```javascript
-const BACKEND_URL = 'https://numkt-backend-production.up.railway.app';
-```
-
-Commit and push. Your GitHub Pages site will now call the real ML backend.
-
----
-
-## Step 4 — Verify it works
-
-Open your GitHub Pages URL. Run an analysis. You should see:
-
-- **LIVE DATA** badge in the header (green) instead of OFFLINE
-- A teal dot (●) next to each ticker in the results table
-- Real CV accuracy from the actual trained model (not simulated)
-- Feature importance bars showing what the RF+GB model actually learned
-- **Run Backtest** button now produces real walk-forward metrics
-
----
-
-## Local development
-
-```bash
-cd backend
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
-```
-
-Open http://localhost:8000/docs for the interactive API docs (FastAPI Swagger UI).
-
-To test locally from your frontend, temporarily set:
-```javascript
-const BACKEND_URL = 'http://localhost:8000';
-```
-
-Then open NUMKT.html directly in your browser (or via a local server).
-
----
 
 ## API Endpoints
 
