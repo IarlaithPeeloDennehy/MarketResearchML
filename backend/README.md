@@ -4,7 +4,7 @@
 
 
 ```
-your-github-repo/
+
 ├── index.html          
 ├── backend/            
 │   ├── main.py
