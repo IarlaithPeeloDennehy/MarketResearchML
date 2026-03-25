@@ -96,6 +96,8 @@ wide — treat IC and hit rate as directional signals, not precise estimates.
 
 The model is trained on cross-sectional factor rankings, not price prediction.
 It learns which factor combinations (value, quality, momentum) have historically
+
+The macro adjustments (Fed rate, VIX, FX rates) are currently hardcoded constants rather than live feeds, this is to be further improved.
 been associated with relative outperformance within the universe provided.
 
 For best results: use 10+ tickers, 3+ years lookback, and run the backtest
