@@ -259,6 +259,20 @@ class NUMKTEnsemble:
             )
             return self._fit_last_resort(features_df)
 
+        # Sort by window time index so TimeSeriesSplit sees data in
+        # chronological order. Rows from different horizons at the same
+        # t_start are grouped together, which is the best we can do without
+        # a single canonical time axis across horizons.
+        combined = sorted(
+            zip(feature_rows, return_labels, forward_returns_list),
+            key=lambda x: x[0].get("_time_idx", 0)
+        )
+        feature_rows, return_labels, forward_returns_list = (
+            list(t) for t in zip(*combined)
+        )
+        for row in feature_rows:
+            row.pop("_time_idx", None)
+
         df_train = pd.DataFrame(feature_rows).fillna(0.5)
         y        = np.array(return_labels)
         fwd_arr  = np.array(forward_returns_list)
@@ -308,12 +322,16 @@ class NUMKTEnsemble:
         cached price series and generate non-overlapping (features, label)
         pairs stepping through the history.
 
-        Returns three parallel lists:
-          feature_rows    -- one dict per observation (factor snapshot at T)
-          return_labels   -- 1 if stock beat universe median, else 0
-          forward_returns -- raw forward return (for IC calculation)
+        Price-derived features (momentum, vol, RSI, price_vs_52w_high) are
+        computed from the price history available at each window start — no
+        lookahead bias. Static fundamentals (P/E, ROE etc.) use today's Yahoo
+        values, an acknowledged limitation since Yahoo does not provide
+        historical fundamental snapshots.
+
+        Each row is tagged with _time_idx = t_start so that
+        _fit_from_price_cache can sort observations chronologically before
+        TimeSeriesSplit CV.
         """
-        # Load price series for all tickers at once
         price_series: dict[str, pd.Series] = {}
         for ticker in tickers:
             safe = ticker.replace(".", "_").replace("/", "_")
@@ -330,22 +348,23 @@ class NUMKTEnsemble:
         if len(price_series) < 3:
             return [], [], []
 
-        # Number of complete non-overlapping windows we can extract.
-        # Use the shortest series so every window has a full cross-section.
-        min_len  = min(len(s) for s in price_series.values())
-        n_windows = (min_len - horizon) // horizon
-        if n_windows < 1:
-            return [], [], []
-
-        # Build a factor snapshot lookup from current features_df.
-        # We use today's snapshot as a proxy for historical snapshots —
-        # see NOTE in _fit_from_price_cache for the acknowledged limitation.
-        feature_lookup: dict[str, dict] = {}
+        # Static fundamentals from today's snapshot (historical values unavailable via Yahoo)
+        static_features: dict[str, dict] = {}
         if "ticker" in features_df.columns:
             for _, row in features_df.iterrows():
                 t = row.get("ticker", "")
                 if t:
-                    feature_lookup[t] = row.to_dict()
+                    static_features[t] = {
+                        col: row.get(col, np.nan)
+                        for col in ["pe_ratio", "pb_ratio", "roe", "net_margin",
+                                    "revenue_growth", "debt_equity", "dividend_yield",
+                                    "beta", "log_mktcap"]
+                    }
+
+        min_len   = min(len(s) for s in price_series.values())
+        n_windows = (min_len - horizon) // horizon
+        if n_windows < 1:
+            return [], [], []
 
         all_feature_rows: list[dict]  = []
         all_labels:       list[int]   = []
@@ -355,14 +374,67 @@ class NUMKTEnsemble:
             t_start = w * horizon
             t_end   = t_start + horizon
 
-            window_returns: dict[str, float] = {}
+            # Build historical feature snapshots for all tickers at t_start.
+            # Use only price data available up to (and including) t_start.
+            raw_snaps: dict[str, dict] = {}
             for ticker, prices in price_series.items():
                 if len(prices) <= t_end:
                     continue
-                p_start = prices.iloc[t_start]
-                p_end   = prices.iloc[t_end]
-                if p_start > 0:
-                    window_returns[ticker] = float(p_end / p_start - 1)
+                p = prices.iloc[:t_start + 1] if t_start > 0 else prices.iloc[:2]
+                if len(p) < 5:
+                    continue
+
+                snap: dict = dict(static_features.get(ticker, {}))
+
+                # Momentum at this historical point
+                for days, key in [(21, "mom_1m"), (63, "mom_3m"),
+                                   (126, "mom_6m"), (252, "mom_12m")]:
+                    snap[key] = (float(p.iloc[-1] / p.iloc[-(days + 1)] - 1)
+                                 if len(p) > days else np.nan)
+
+                # Realised volatility (annualised)
+                if len(p) > 10:
+                    lr = np.log(p / p.shift(1)).dropna().iloc[-min(60, len(p) - 1):]
+                    snap["vol_60d"] = float(lr.std() * np.sqrt(252)) if len(lr) > 1 else np.nan
+                else:
+                    snap["vol_60d"] = np.nan
+
+                # RSI-14 using Wilder's EMA
+                if len(p) > 15:
+                    d    = p.diff().dropna()
+                    gain = d.clip(lower=0).ewm(span=14, adjust=False).mean().iloc[-1]
+                    loss = (-d.clip(upper=0)).ewm(span=14, adjust=False).mean().iloc[-1]
+                    snap["rsi_14"] = float(100 - 100 / (1 + gain / (loss + 1e-9)))
+                else:
+                    snap["rsi_14"] = np.nan
+
+                hi = p.iloc[-min(252, len(p)):].max()
+                snap["price_vs_52w_high"] = float(p.iloc[-1] / hi - 1) if hi > 0 else np.nan
+
+                raw_snaps[ticker] = snap
+
+            if len(raw_snaps) < 3:
+                continue
+
+            # Cross-sectional rank normalisation at this window's point in time
+            snap_df = pd.DataFrame(raw_snaps).T
+            for col in FEATURE_COLS:
+                if col in snap_df.columns and snap_df[col].notna().sum() > 1:
+                    snap_df[col + "_rank"] = snap_df[col].rank(pct=True)
+                elif col + "_rank" not in snap_df.columns:
+                    snap_df[col + "_rank"] = 0.5
+            snap_df = snap_df.fillna(0.5)
+
+            # Actual forward returns from t_start to t_end
+            window_returns: dict[str, float] = {}
+            for ticker in raw_snaps:
+                prices_s = price_series[ticker]
+                if len(prices_s) <= t_end:
+                    continue
+                p0 = prices_s.iloc[t_start]
+                p1 = prices_s.iloc[t_end]
+                if p0 > 0:
+                    window_returns[ticker] = float(p1 / p0 - 1)
 
             if len(window_returns) < 3:
                 continue
@@ -370,8 +442,11 @@ class NUMKTEnsemble:
             median_ret = float(np.median(list(window_returns.values())))
 
             for ticker, ret in window_returns.items():
+                if ticker not in snap_df.index:
+                    continue
                 label = 1 if ret > median_ret else 0
-                frow  = feature_lookup.get(ticker, {})
+                frow  = snap_df.loc[ticker].to_dict()
+                frow["_time_idx"] = t_start  # for chronological sorting
                 all_feature_rows.append(frow)
                 all_labels.append(label)
                 all_fwd.append(ret)
