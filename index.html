@@ -389,7 +389,7 @@ select{width:100%;padding:6px 9px;border-radius:var(--r);border:1px solid var(--
    Leave as empty string to run in offline mode (local factors).
    Example: const BACKEND_URL = 'https://numkt-backend.up.railway.app';
 ================================================================ */
-const BACKEND_URL = 'http://localhost:8000'; // local backend
+const BACKEND_URL = 'https://marketresearchml-production.up.railway.app'; // local backend
 
 async function callBackend(endpoint, payload) {
   if (!BACKEND_URL) return null;
