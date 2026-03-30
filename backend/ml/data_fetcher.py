@@ -54,11 +54,18 @@ def _info_cache_path(ticker: str) -> Path:
     safe = ticker.replace(".", "_").replace("/", "_")
     return INFO_DIR / f"{safe}.json"
 
+CACHE_MAX_AGE_HOURS = 168  # 7 days
+
 def _cache_is_fresh(path: Path) -> bool:
     if not path.exists():
         return False
-    age = datetime.now() - datetime.fromtimestamp(path.stat().st_mtime)
-    return age.total_seconds() < CACHE_MAX_AGE_HOURS * 3600
+    try:
+        mtime = path.stat().st_mtime
+        age = datetime.now().timestamp() - mtime
+        return age < CACHE_MAX_AGE_HOURS * 3600
+    except Exception:
+        return False
+    
 
 def _load_cached_prices(ticker: str) -> pd.DataFrame | None:
     path = _price_cache_path(ticker)
@@ -234,29 +241,39 @@ async def fetch_stock_data(ticker: str, lookback_years: int = 5) -> dict | None:
 
 
 async def fetch_multiple_stocks(tickers: list[str], lookback_years: int = 5) -> dict:
-    """
-    Fetches tickers sequentially with 1s gaps between uncached tickers.
-    Cached tickers load instantly from disk with no delay needed.
-    """
     out = {}
     uncached_count = 0
 
     for ticker in tickers:
-        # Check if this ticker is already cached and fresh
         price_path = _price_cache_path(ticker)
-        is_cached  = _cache_is_fresh(price_path)
+        
+        # Load cached data if it exists and is fresh
+        if _cache_is_fresh(price_path):
+            cached = _load_cached_prices(ticker)
+            if cached is not None and len(cached) >= MIN_BARS:
+                info = _load_cached_info(ticker) or {}
+                result = {
+                    "ticker":  ticker,
+                    "prices":  cached,
+                    "info":    info,
+                    "financials": pd.DataFrame(),
+                    "balance":    pd.DataFrame(),
+                }
+                flat = await _build_flat(ticker, result)
+                if flat:
+                    out[ticker] = flat
+                    logger.info(f"{ticker}: served from disk cache, skipping Yahoo")
+                    continue
 
-        if not is_cached and uncached_count > 0:
-            # Only delay when actually hitting Yahoo
+        # Not cached or stale — fetch from Yahoo
+        if uncached_count > 0:
             logger.info(f"Waiting 2s before fetching {ticker} from Yahoo")
             await asyncio.sleep(2)
 
         result = await fetch_stock_data(ticker, lookback_years)
-
         if result is not None:
             out[ticker] = result
-            if not is_cached:
-                uncached_count += 1
+            uncached_count += 1
         else:
             logger.warning(f"Dropping {ticker} — no data available")
 
@@ -284,6 +301,38 @@ def get_cache_status() -> dict:
         except Exception:
             pass
     return result
+
+async def _build_flat(ticker: str, result: dict) -> dict | None:
+    """Build the flat response dict from a cached result without hitting Yahoo."""
+    try:
+        info   = result["info"]
+        prices = result["prices"]
+        last_price   = float(prices["Close"].iloc[-1])
+        price_1y_ago = float(prices["Close"].iloc[-252]) if len(prices) >= 252 else None
+        price_3m_ago = float(prices["Close"].iloc[-63])  if len(prices) >= 63  else None
+        return {
+            "ticker":         ticker,
+            "name":           info.get("longName", ticker),
+            "sector":         info.get("sector", "Unknown"),
+            "market":         _detect_market(ticker),
+            "currency":       info.get("currency", "USD"),
+            "last_price":     last_price,
+            "market_cap_bn":  round(info.get("marketCap", 0) / 1e9, 1),
+            "pe":             info.get("trailingPE"),
+            "pb":             info.get("priceToBook"),
+            "roe":            info.get("returnOnEquity"),
+            "net_margin":     info.get("profitMargins"),
+            "revenue_growth": info.get("revenueGrowth"),
+            "debt_equity":    info.get("debtToEquity"),
+            "dividend_yield": info.get("dividendYield"),
+            "beta":           info.get("beta"),
+            "momentum_12m":   round(last_price/price_1y_ago-1,4) if price_1y_ago else None,
+            "momentum_3m":    round(last_price/price_3m_ago-1,4) if price_3m_ago else None,
+            "_raw": result,
+        }
+    except Exception as e:
+        logger.warning(f"{ticker}: could not build flat from cache: {e}")
+        return None
 
 
 def clear_cache(ticker: str | None = None):

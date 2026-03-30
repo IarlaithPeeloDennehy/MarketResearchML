@@ -424,7 +424,7 @@ const ALL_STOCKS=[
 {t:'AMZN', n:'Amazon.com Inc.',       s:'Consumer Disc.',  m:'US',p:182.0, pe:55, pb:8.5, roe:0.16,de:0.55,dy:0.000,rg:0.12, mg:0.060,beta:1.35,m12:0.44, m3:0.12, mc:1900},
 {t:'NVDA', n:'NVIDIA Corp.',          s:'Technology',      m:'US',p:880.0, pe:68, pb:38,  roe:0.55,de:0.42,dy:0.001,rg:0.85, mg:0.536,beta:1.75,m12:2.10, m3:0.45, mc:2160},
 {t:'META', n:'Meta Platforms',        s:'Technology',      m:'US',p:485.0, pe:23, pb:6.8, roe:0.32,de:0.12,dy:0.004,rg:0.22, mg:0.406,beta:1.40,m12:0.75, m3:0.18, mc:1250},
-{t:'BRK.B',n:'Berkshire Hathaway',    s:'Financials',      m:'US',p:358.0, pe:9,  pb:1.5, roe:0.16,de:0.25,dy:0.000,rg:0.12, mg:0.090,beta:0.80,m12:0.18, m3:0.06, mc:870},
+{t:'BRK-B',n:'Berkshire Hathaway',    s:'Financials',      m:'US',p:358.0, pe:9,  pb:1.5, roe:0.16,de:0.25,dy:0.000,rg:0.12, mg:0.090,beta:0.80,m12:0.18, m3:0.06, mc:870},
 {t:'JPM',  n:'JPMorgan Chase',        s:'Financials',      m:'US',p:198.4, pe:11, pb:2.0, roe:0.17,de:1.15,dy:0.024,rg:0.21, mg:0.320,beta:1.10,m12:0.28, m3:0.07, mc:570},
 {t:'JNJ',  n:'Johnson & Johnson',     s:'Healthcare',      m:'US',p:152.3, pe:16, pb:5.5, roe:0.22,de:0.48,dy:0.030,rg:0.03, mg:0.190,beta:0.60,m12:-0.04,m3:-0.02,mc:365},
 {t:'UNH',  n:'UnitedHealth Group',    s:'Healthcare',      m:'US',p:492.0, pe:20, pb:5.2, roe:0.27,de:0.70,dy:0.015,rg:0.09, mg:0.073,beta:0.65,m12:0.08, m3:-0.06,mc:453},
@@ -489,7 +489,7 @@ const ALL_STOCKS=[
 
 /* ── IRELAND ── */
 {t:'CRH',    n:'CRH plc',             s:'Materials',       m:'IE',p:78.0,  pe:22, pb:3.5, roe:0.16,de:0.55,dy:0.017,rg:0.14, mg:0.115,beta:1.10,m12:0.32, m3:0.08, mc:55},
-{t:'AIBG.IR', n:'AIB Group plc',       s:'Financials',      m:'IE',p:5.20,  pe:7,  pb:0.85,roe:0.13,de:0.90,dy:0.055,rg:0.12, mg:0.310,beta:1.10,m12:0.42, m3:0.11, mc:12},
+{t:'A5G.IR', n:'AIB Group plc',       s:'Financials',      m:'IE',p:5.20,  pe:7,  pb:0.85,roe:0.13,de:0.90,dy:0.055,rg:0.12, mg:0.310,beta:1.10,m12:0.42, m3:0.11, mc:12},
 {t:'BIRG.IR', n:'Bank of Ireland',     s:'Financials',      m:'IE',p:9.80,  pe:8,  pb:0.90,roe:0.12,de:0.88,dy:0.048,rg:0.10, mg:0.280,beta:1.05,m12:0.38, m3:0.09, mc:8},
 {t:'KRZ.IR', n:'Kerry Group plc',     s:'Consumer Staples',m:'IE',p:88.0,  pe:22, pb:3.2, roe:0.15,de:0.65,dy:0.012,rg:0.05, mg:0.120,beta:0.65,m12:0.04, m3:0.01, mc:15},
 {t:'RYAAY',    n:'Ryanair Holdings',    s:'Industrials',     m:'IE',p:19.5,  pe:14, pb:4.5, roe:0.32,de:1.20,dy:0.000,rg:0.24, mg:0.180,beta:1.30,m12:0.28, m3:0.07, mc:22},
@@ -536,7 +536,7 @@ const HF_DATA={
 };
 
 let activeMkt='US';
-let selectedTickers=new Set(['AAPL','MSFT','NVDA','JPM','BRK.B','META','JNJ','PG','SHEL.L','AZN.L','CRH','AIBG.IR','RYAAY']);
+let selectedTickers=new Set(['AAPL','MSFT','NVDA','JPM','BRK-B','META','JNJ','PG','SHEL.L','AZN.L','CRH','A5G.IR','RYAAY']);
 let charts={};
 let runResults=null;
 
