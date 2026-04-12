@@ -55,11 +55,14 @@ from .feature_engineering import FEATURE_COLS
 
 logger = logging.getLogger(__name__)
 
-MODEL_DIR = Path(__file__).parent.parent / "cache" / "models"
+import os as _os
+_cache_root = _os.environ.get("CACHE_DIR")
+_base = Path(_cache_root) if _cache_root else Path(__file__).parent.parent / "cache"
+MODEL_DIR = _base / "models"
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
 # Where data_fetcher stores parquet price files
-PRICE_DIR = Path(__file__).parent.parent / "cache" / "prices"
+PRICE_DIR = _base / "prices"
 
 # Minimum real labelled rows before we trust the model.
 # Below this the dataset is too thin and we log a loud warning.

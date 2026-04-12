@@ -387,9 +387,9 @@ select{width:100%;padding:6px 9px;border-radius:var(--r);border:1px solid var(--
    BACKEND CONFIG
    Set BACKEND_URL to your Railway URL after deploying.
    Leave as empty string to run in offline mode (local factors).
-   Example: const BACKEND_URL = 'https://numkt-backend.up.railway.app';
+   Example: const BACKEND_URL = 'https://numkt-backend.ondigitalocean.app';
 ================================================================ */
-const BACKEND_URL = 'http://localhost:8000'; // local backend
+const BACKEND_URL = 'https://YOUR-APP-NAME.ondigitalocean.app'; // set after DO deploy
 
 async function callBackend(endpoint, payload) {
   if (!BACKEND_URL) return null;

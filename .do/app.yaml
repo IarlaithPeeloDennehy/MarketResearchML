@@ -1,0 +1,37 @@
+name: numkt
+region: lon  # London — change to nyc/ams/syd etc. if preferred
+
+services:
+- name: numkt-backend
+  github:
+    repo: IarlaithPeeloDennehy/MarketResearchML
+    branch: main
+    deploy_on_push: true
+  source_dir: backend
+  run_command: uvicorn main:app --host 0.0.0.0 --port $PORT
+  http_port: 8080
+  instance_count: 1
+  instance_size_slug: basic-xxs  # $12/month — always on, no sleeping
+  envs:
+  - key: CACHE_DIR
+    value: /mnt/cache
+  - key: PYTHON_VERSION
+    value: "3.11"
+  storage_mounts:
+  - name: numkt-cache
+    mount_path: /mnt/cache
+    storage_class: ""  # leave blank for default (DO Block Storage, ~$0.10/GB/month)
+    initial_filesystem_type: ""
+
+static_sites:
+- name: numkt-frontend
+  github:
+    repo: IarlaithPeeloDennehy/MarketResearchML
+    branch: main
+    deploy_on_push: true
+  source_dir: /
+  index_document: Index.html
+  error_document: Index.html
+  cors:
+    allow_origins:
+    - prefix: "*"

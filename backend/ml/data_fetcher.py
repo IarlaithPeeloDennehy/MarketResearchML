@@ -31,7 +31,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Cache directories — created automatically
-CACHE_DIR   = Path(__file__).parent.parent / "cache"
+# CACHE_DIR env var lets DigitalOcean (or any host) redirect cache to a persistent volume mount
+_cache_root = os.environ.get("CACHE_DIR")
+CACHE_DIR   = Path(_cache_root) if _cache_root else Path(__file__).parent.parent / "cache"
 PRICE_DIR   = CACHE_DIR / "prices"
 INFO_DIR    = CACHE_DIR / "info"
 CACHE_DIR.mkdir(exist_ok=True)
