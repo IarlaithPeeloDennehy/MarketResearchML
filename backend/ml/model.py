@@ -40,7 +40,7 @@ predict_proba(), save(), load(), list_saved() all behave identically.
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.model_selection import TimeSeriesSplit, cross_val_predict
+from sklearn.model_selection import TimeSeriesSplit, cross_val_predict, cross_val_score
 from sklearn.preprocessing import RobustScaler
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
