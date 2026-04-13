@@ -240,6 +240,18 @@ select{width:100%;padding:6px 9px;border-radius:var(--r);border:1px solid var(--
 @keyframes blink-txt{0%,100%{opacity:1}50%{opacity:0.4}}
 .bt-error{font-size:11px;color:var(--red);background:var(--red-light);padding:10px 12px;border-radius:var(--r);border:1px solid rgba(163,32,32,0.2)}
 .bt-offline{font-size:11px;color:var(--amber);background:var(--amber-light);padding:10px 12px;border-radius:var(--r);border:1px solid rgba(196,124,0,0.25)}
+.bt-examples{margin-top:16px}
+.bt-examples-title{font-size:9px;color:var(--ink3);font-family:'DM Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:8px}
+.bt-period{background:var(--paper);border:1px solid var(--paper3);border-radius:var(--r2);padding:10px 12px;margin-bottom:8px}
+.bt-period-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.bt-period-label{font-family:'DM Mono',monospace;font-size:9px;color:var(--ink3);letter-spacing:0.06em;text-transform:uppercase}
+.bt-period-hr{font-family:'DM Mono',monospace;font-size:11px;font-weight:600}
+.bt-period-table{width:100%;border-collapse:collapse;font-size:10px}
+.bt-period-table th{font-family:'DM Mono',monospace;font-size:8px;color:var(--ink3);letter-spacing:0.06em;text-transform:uppercase;text-align:left;padding:3px 6px;border-bottom:1px solid var(--paper3)}
+.bt-period-table td{padding:4px 6px;border-bottom:1px solid var(--paper3);color:var(--ink2)}
+.bt-period-table tr:last-child td{border-bottom:none}
+.bt-correct{color:var(--green)!important;font-weight:600}
+.bt-wrong{color:var(--red)!important;font-weight:600}
 </style>
 </head>
 <body>
@@ -1235,6 +1247,46 @@ function buildMacroNote(s){
   return notes.slice(0,3).join(' ');
 }
 
+function buildPeriodExamples(examples){
+  if(!examples||examples.length===0) return '';
+  const periods=examples.map(p=>{
+    const hrColor=p.hit_rate_pct>=60?'var(--green)':p.hit_rate_pct>=40?'var(--amber)':'var(--red)';
+    const rows=p.stocks.map(s=>{
+      const scoreColor=s.model_score>=50?'var(--green)':'var(--ink3)';
+      const retColor=s.actual_return_pct>=0?'var(--green)':'var(--red)';
+      const retStr=(s.actual_return_pct>0?'+':'')+s.actual_return_pct+'%';
+      const correctMark=s.correct
+        ?'<span class="bt-correct">✓</span>'
+        :'<span class="bt-wrong">✗</span>';
+      return `<tr>
+        <td style="font-family:'DM Mono',monospace;font-weight:600">${s.ticker}</td>
+        <td style="color:${scoreColor}">${s.model_score}%</td>
+        <td>${s.predicted_top?'Top half':'Bottom half'}</td>
+        <td style="color:${retColor}">${retStr}</td>
+        <td>${s.actual_top?'Top half':'Bottom half'}</td>
+        <td style="text-align:center">${correctMark}</td>
+      </tr>`;
+    }).join('');
+    return `<div class="bt-period">
+      <div class="bt-period-header">
+        <span class="bt-period-label">${p.date_range||'Period '+p.period} · ${p.n_stocks} stocks</span>
+        <span class="bt-period-hr" style="color:${hrColor}">${p.hit_rate_pct}% correct</span>
+      </div>
+      <table class="bt-period-table">
+        <thead><tr>
+          <th>Ticker</th><th>Model Score</th><th>Predicted</th>
+          <th>Actual Return</th><th>Actual Rank</th><th>✓/✗</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+  }).join('');
+  return `<div class="bt-examples">
+    <div class="bt-examples-title">Out-of-sample prediction examples (holdout periods)</div>
+    ${periods}
+  </div>`;
+}
+
 async function runBacktest(){
   if(!BACKEND_URL){
     document.getElementById('btResults').innerHTML='<div class="bt-offline">Backtest requires the Python backend to be running. Deploy the backend to Railway and set BACKEND_URL in the HTML to enable this feature.</div>';
@@ -1322,7 +1374,8 @@ async function runBacktest(){
         <div class="bt-val" style="color:${m.ann_portfolio_return>0?'var(--green)':'var(--red)'}">${m.ann_portfolio_return!=null?(m.ann_portfolio_return>0?'+':'')+m.ann_portfolio_return+'%':'—'}</div>
         <div class="bt-interp">top-quintile</div>
       </div>
-    </div>`;
+    </div>
+    ${buildPeriodExamples(m.training?.period_examples)}`;
 }
 
 document.getElementById('dpClose').onclick=()=>document.getElementById('detailPanel').classList.remove('open');

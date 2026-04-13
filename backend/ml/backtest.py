@@ -119,6 +119,23 @@ def run_backtest(
     logger.info(f"Backtest: {len(tickers)} tickers, {n_periods} periods, "
                 f"{forward_months}M forward window")
 
+    # ── Train / holdout split ──────────────────────────────────────────────
+    # Hold out the last ~20% of periods so the model can be evaluated on
+    # data it never saw during training. Requires at least 4 periods to be
+    # worth splitting; below that threshold all data goes to training and
+    # holdout_ic is skipped.
+    if n_periods >= 4:
+        n_holdout    = max(1, n_periods // 5)
+        train_cutoff = n_periods - n_holdout
+    else:
+        n_holdout    = 0
+        train_cutoff = n_periods
+
+    logger.info(
+        f"Train/holdout split: {train_cutoff} training periods, "
+        f"{n_holdout} holdout periods"
+    )
+
     # ── Accumulators ──────────────────────────────────────────────────────
     period_ics        = []
     period_hit_rates  = []
@@ -127,10 +144,15 @@ def run_backtest(
     prev_positions    = set()
     turnovers         = []
 
-    # For model training — collected across ALL periods
-    all_feature_rows   = []   # one dict per (stock, period)
-    all_return_labels  = []   # 1 = beat median, 0 = did not
-    all_forward_returns = []  # actual returns (for IC calculation)
+    # Training periods (period < train_cutoff)
+    all_feature_rows    = []
+    all_return_labels   = []
+    all_forward_returns = []
+
+    # Holdout periods (period >= train_cutoff) — never seen by the model
+    holdout_feature_rows    = []
+    holdout_return_labels   = []
+    holdout_forward_returns = []
 
     for period in range(n_periods):
         start_idx = period * rebalance_days
@@ -241,11 +263,11 @@ def run_backtest(
         sv = [scores[t]   for t in common]
         rv = [fwd_rets[t] for t in common]
 
-        # ── Collect training data for this period ──────────────────────────
-        # Only price-derived rank features are included in training rows.
-        # Fundamental ratios (PE, ROE, etc.) are excluded because Yahoo only
-        # provides today's values — using them for historical windows would
-        # leak future information into the model (look-ahead bias).
+        # ── Collect training / holdout data for this period ───────────────
+        # Only price-derived rank features are included (no fundamentals).
+        # Periods before train_cutoff go into the training set; periods from
+        # train_cutoff onward go into the holdout set and are never seen by
+        # the model during fitting.
         if train_model:
             median_ret = np.median(rv)
             for ticker, ret in zip(common, rv):
@@ -256,10 +278,16 @@ def run_backtest(
                         if f"{col}_rank" in snap_df.columns
                     }
                     row_dict["ticker"] = ticker
-                    all_feature_rows.append(row_dict)
-                    # Label: 1 if this stock beat the equal-weight median
-                    all_return_labels.append(1 if ret >= median_ret else 0)
-                    all_forward_returns.append(ret)
+                    label = 1 if ret >= median_ret else 0
+                    if period < train_cutoff:
+                        all_feature_rows.append(row_dict)
+                        all_return_labels.append(label)
+                        all_forward_returns.append(ret)
+                    else:
+                        row_dict["_period_idx"] = period
+                        holdout_feature_rows.append(row_dict)
+                        holdout_return_labels.append(label)
+                        holdout_forward_returns.append(ret)
 
         # ── IC ─────────────────────────────────────────────────────────────
         if len(set(sv)) > 1:
@@ -308,17 +336,106 @@ def run_backtest(
         )
         model.save(model_name)
 
+        # ── Holdout IC + period examples — genuine out-of-sample ──────────
+        # Score all holdout rows in one pass, then compute IC and build
+        # per-period examples showing correct vs incorrect predictions.
+        holdout_ic      = None
+        period_examples = []
+        if model.is_fitted and holdout_feature_rows:
+            try:
+                X_h = pd.DataFrame(holdout_feature_rows).fillna(0.5)
+
+                # Pull non-feature columns out before scoring
+                period_idxs = (X_h.pop("_period_idx")
+                               if "_period_idx" in X_h.columns
+                               else pd.Series([0] * len(X_h)))
+                tickers_h   = (X_h.pop("ticker")
+                               if "ticker" in X_h.columns
+                               else pd.Series([""] * len(X_h)))
+
+                for c in model._feature_names:
+                    if c not in X_h.columns:
+                        X_h[c] = 0.5
+
+                h_preds = model.predict_proba(X_h[model._feature_names].values)
+
+                # Holdout IC
+                ic_val, _ = spearmanr(h_preds, holdout_forward_returns)
+                holdout_ic = round(float(ic_val), 4) if np.isfinite(ic_val) else None
+                logger.info(
+                    f"Holdout IC (out-of-sample, {len(holdout_feature_rows)} rows): "
+                    f"{holdout_ic}"
+                )
+
+                # Date lookup: map period index → "MMM YYYY → MMM YYYY"
+                period_dates: dict[int, str] = {}
+                ref_prices = next(iter(price_series.values()))
+                for p_idx in range(n_periods):
+                    si = p_idx * rebalance_days
+                    ei = si + forward_days
+                    if ei < len(ref_prices):
+                        sd = ref_prices.index[si]
+                        ed = ref_prices.index[ei]
+                        period_dates[p_idx] = (
+                            f"{sd.strftime('%b %Y')} → {ed.strftime('%b %Y')}"
+                        )
+
+                # Per-period breakdown
+                df_ex = pd.DataFrame({
+                    "period":        period_idxs.values,
+                    "ticker":        tickers_h.values,
+                    "model_score":   h_preds,
+                    "pred_top":      (h_preds >= 0.5),
+                    "actual_return": holdout_forward_returns,
+                    "actual_top":    np.array(holdout_return_labels, dtype=bool),
+                })
+                df_ex["correct"] = df_ex["pred_top"] == df_ex["actual_top"]
+
+                for p_idx, grp in df_ex.groupby("period"):
+                    grp = grp.sort_values("model_score", ascending=False)
+                    period_examples.append({
+                        "period":       int(p_idx),
+                        "date_range":   period_dates.get(int(p_idx), f"Period {p_idx}"),
+                        "n_stocks":     len(grp),
+                        "hit_rate_pct": round(float(grp["correct"].mean()) * 100, 1),
+                        "stocks": [
+                            {
+                                "ticker":            str(row["ticker"]),
+                                "model_score":       round(float(row["model_score"]) * 100, 1),
+                                "predicted_top":     bool(row["pred_top"]),
+                                "actual_return_pct": round(float(row["actual_return"]) * 100, 1),
+                                "actual_top":        bool(row["actual_top"]),
+                                "correct":           bool(row["correct"]),
+                            }
+                            for _, row in grp.iterrows()
+                        ],
+                    })
+
+            except Exception as e:
+                logger.warning(f"Could not compute holdout analysis: {e}")
+
+        holdout_note = (
+            f"Holdout IC (out-of-sample): {holdout_ic:.4f}. "
+            if holdout_ic is not None else
+            "Holdout IC: n/a (too few periods to split). "
+        )
+
         training_info = {
             "trained":         True,
             "training_rows":   len(all_feature_rows),
+            "holdout_rows":    len(holdout_feature_rows),
             "training_source": "real_returns",
             "cv_accuracy":     round(model.cv_accuracy, 4),
             "oof_ic":          round(model.cv_ic, 4),
+            "holdout_ic":      holdout_ic,
+            "period_examples": period_examples,
             "model_name":      model_name,
             "message": (
-                f"Model trained on {len(all_feature_rows)} real observations. "
+                f"Model trained on {len(all_feature_rows)} observations "
+                f"({len(holdout_feature_rows)} held out). "
                 f"OOF CV accuracy: {model.cv_accuracy:.1%}. "
                 f"OOF IC: {model.cv_ic:.4f}. "
+                f"{holdout_note}"
                 f"Next analysis will use this model."
             )
         }
