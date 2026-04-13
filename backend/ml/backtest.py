@@ -137,11 +137,14 @@ def run_backtest(
     )
 
     # ── Accumulators ──────────────────────────────────────────────────────
+    # bench_ret_by_period is filled during the loop.
+    # All other metric accumulators are filled after training using ML model
+    # scores — not the hand-coded factor formula.
+    bench_ret_by_period: dict[int, float] = {}
     period_ics        = []
     period_hit_rates  = []
     portfolio_returns = []
     benchmark_returns = []
-    prev_positions    = set()
     turnovers         = []
 
     # Training periods (period < train_cutoff)
@@ -194,18 +197,6 @@ def run_backtest(
             hi = p.iloc[-min(252,len(p)):].max()
             snap["price_vs_52w_high"] = float(p.iloc[-1]/hi-1) if hi>0 else 0.0
 
-            # Fundamentals from Yahoo info (static across periods)
-            info = _extract_info(raw_data[ticker])
-            snap["pe_ratio"]       = _safe(info.get("trailingPE"),    20.0)
-            snap["pb_ratio"]       = _safe(info.get("priceToBook"),    2.0)
-            snap["roe"]            = _safe(info.get("returnOnEquity"), 0.10)
-            snap["net_margin"]     = _safe(info.get("profitMargins"),  0.10)
-            snap["revenue_growth"] = _safe(info.get("revenueGrowth"),  0.05)
-            snap["debt_equity"]    = _safe(info.get("debtToEquity"),   0.50)
-            snap["dividend_yield"] = _safe(info.get("dividendYield"),  0.02)
-            snap["beta"]           = _safe(info.get("beta"),           1.00)
-            snap["log_mktcap"]     = np.log(max(_safe(info.get("marketCap"),1e10),1e6))
-
             snap_features[ticker] = snap
 
         if len(snap_features) < 2:
@@ -215,8 +206,8 @@ def run_backtest(
         snap_df      = pd.DataFrame(snap_features).T
         tickers_here = list(snap_df.index)
 
-        # Rank-normalise cross-sectionally
-        for col in FEATURE_COLS:
+        # Rank-normalise cross-sectionally (price features only — no fundamentals)
+        for col in PRICE_FEATURE_COLS:
             if col in snap_df.columns and snap_df[col].notna().sum() > 1:
                 snap_df[col+"_rank"] = snap_df[col].rank(pct=True)
             elif col+"_rank" not in snap_df.columns:
@@ -237,89 +228,39 @@ def run_backtest(
         if len(fwd_rets) < 2:
             continue
 
-        # ── Factor score for ranking ───────────────────────────────────────
-        scores = {}
-        for ticker in tickers_here:
-            if ticker not in snap_df.index:
-                continue
-            row = snap_df.loc[ticker]
-            s   = 0.0
-            for col, wt in [
-                ("roe_rank",            0.25),
-                ("net_margin_rank",     0.20),
-                ("mom_12m_rank",        0.20),
-                ("pe_ratio_rank",      -0.15),
-                ("debt_equity_rank",   -0.10),
-                ("revenue_growth_rank", 0.10),
-            ]:
-                if col in row.index and pd.notna(row[col]):
-                    s += abs(wt)*(1-float(row[col]) if wt<0 else float(row[col]))
-            scores[ticker] = s
-
-        common = [t for t in tickers_here if t in scores and t in fwd_rets]
+        common = [t for t in tickers_here if t in fwd_rets]
         if len(common) < 2:
             continue
 
-        sv = [scores[t]   for t in common]
         rv = [fwd_rets[t] for t in common]
+        bench_ret_by_period[period] = float(np.mean(rv))
 
-        # ── Collect training / holdout data for this period ───────────────
-        # Only price-derived rank features are included (no fundamentals).
-        # Periods before train_cutoff go into the training set; periods from
-        # train_cutoff onward go into the holdout set and are never seen by
-        # the model during fitting.
+        # ── Collect training / holdout data ────────────────────────────────
+        # Price-derived rank features only. _period_idx is stored on every row
+        # so that after training we can map OOF / model predictions back to
+        # their period for per-period metric computation.
         if train_model:
             median_ret = np.median(rv)
-            for ticker, ret in zip(common, rv):
-                if ticker in snap_df.index:
-                    row_dict = {
-                        f"{col}_rank": float(snap_df.loc[ticker].get(f"{col}_rank", 0.5))
-                        for col in PRICE_FEATURE_COLS
-                        if f"{col}_rank" in snap_df.columns
-                    }
-                    row_dict["ticker"] = ticker
-                    label = 1 if ret >= median_ret else 0
-                    if period < train_cutoff:
-                        all_feature_rows.append(row_dict)
-                        all_return_labels.append(label)
-                        all_forward_returns.append(ret)
-                    else:
-                        row_dict["_period_idx"] = period
-                        holdout_feature_rows.append(row_dict)
-                        holdout_return_labels.append(label)
-                        holdout_forward_returns.append(ret)
+            for ticker in common:
+                ret = fwd_rets[ticker]
+                row_dict = {
+                    f"{col}_rank": float(snap_df.loc[ticker].get(f"{col}_rank", 0.5))
+                    for col in PRICE_FEATURE_COLS
+                    if f"{col}_rank" in snap_df.columns
+                }
+                row_dict["ticker"]      = ticker
+                row_dict["_period_idx"] = period
+                label = 1 if ret >= median_ret else 0
+                if period < train_cutoff:
+                    all_feature_rows.append(row_dict)
+                    all_return_labels.append(label)
+                    all_forward_returns.append(ret)
+                else:
+                    holdout_feature_rows.append(row_dict)
+                    holdout_return_labels.append(label)
+                    holdout_forward_returns.append(ret)
 
-        # ── IC ─────────────────────────────────────────────────────────────
-        if len(set(sv)) > 1:
-            ic, _ = spearmanr(sv, rv)
-            if np.isfinite(ic):
-                period_ics.append(float(ic))
-
-        # ── Hit rate ───────────────────────────────────────────────────────
-        med  = np.median(sv)
-        top  = [fwd_rets[t] for t,s in zip(common,sv) if s >= med]
-        bot  = [fwd_rets[t] for t,s in zip(common,sv) if s <  med]
-        if top and bot:
-            period_hit_rates.append(1 if np.mean(top) > np.mean(bot) else 0)
-
-        # ── Portfolio returns ──────────────────────────────────────────────
-        n_top = max(1, len(common)//5)
-        top_tickers = sorted(common, key=lambda t: scores[t], reverse=True)[:n_top]
-        port_ret  = float(np.mean([fwd_rets[t] for t in top_tickers]))
-        bench_ret = float(np.mean(rv))
-        portfolio_returns.append(port_ret)
-        benchmark_returns.append(bench_ret)
-
-        curr = set(top_tickers)
-        if prev_positions:
-            turnovers.append(1 - len(curr & prev_positions)/max(len(curr),1))
-        prev_positions = curr
-
-        ic_str = f"{period_ics[-1]:.3f}" if period_ics else "N/A"
-        logger.info(
-            f"Period {period}: {len(common)} stocks | IC={ic_str} | "
-            f"port={port_ret:.2%} | bench={bench_ret:.2%}"
-        )
+        logger.info(f"Period {period}: {len(common)} stocks | bench={np.mean(rv):.2%}")
 
     # ── Train model on collected real-return data ──────────────────────────
     training_info = {}
@@ -336,83 +277,174 @@ def run_backtest(
         )
         model.save(model_name)
 
-        # ── Holdout IC + period examples — genuine out-of-sample ──────────
-        # Score all holdout rows in one pass, then compute IC and build
-        # per-period examples showing correct vs incorrect predictions.
+        # ── Score all periods with ML model, then compute every metric ──────
+        #
+        # Training periods → OOF predictions from cross-validation.
+        #   Each fold's test predictions were made by a model that never saw
+        #   those rows, so these are genuinely out-of-sample for the training
+        #   set — no information from the holdout data leaks in.
+        #
+        # Holdout periods → direct model.predict_proba() on data the model
+        #   has never seen at all.
+        #
+        # All IC, hit-rate, Sharpe, alpha, drawdown figures are computed from
+        # these ML scores — not from the old hand-coded factor formula.
+
         holdout_ic      = None
         period_examples = []
-        if model.is_fitted and holdout_feature_rows:
+        prev_top_set    = set()
+
+        if model.is_fitted:
             try:
-                X_h = pd.DataFrame(holdout_feature_rows).fillna(0.5)
+                # ── 1. Training period scores (OOF) ───────────────────────
+                if (model._oof_proba is not None
+                        and len(model._oof_proba) == len(all_feature_rows)):
+                    train_scores = model._oof_proba
+                else:
+                    logger.warning(
+                        "OOF predictions unavailable — falling back to in-sample "
+                        "scores for training periods (metrics will be optimistic)"
+                    )
+                    X_tr = pd.DataFrame(all_feature_rows).fillna(0.5)
+                    for col in ["ticker", "_period_idx"]:
+                        if col in X_tr.columns:
+                            X_tr = X_tr.drop(columns=[col])
+                    for c in model._feature_names:
+                        if c not in X_tr.columns:
+                            X_tr[c] = 0.5
+                    train_scores = model.predict_proba(X_tr[model._feature_names].values)
 
-                # Pull non-feature columns out before scoring
-                period_idxs = (X_h.pop("_period_idx")
-                               if "_period_idx" in X_h.columns
-                               else pd.Series([0] * len(X_h)))
-                tickers_h   = (X_h.pop("ticker")
-                               if "ticker" in X_h.columns
-                               else pd.Series([""] * len(X_h)))
+                # ── 2. Holdout period scores ───────────────────────────────
+                h_preds       = np.array([])
+                period_idxs_h = pd.Series([], dtype=int)
+                tickers_h     = pd.Series([], dtype=str)
 
-                for c in model._feature_names:
-                    if c not in X_h.columns:
-                        X_h[c] = 0.5
+                if holdout_feature_rows:
+                    X_h = pd.DataFrame(holdout_feature_rows).fillna(0.5)
+                    period_idxs_h = (X_h.pop("_period_idx")
+                                     if "_period_idx" in X_h.columns
+                                     else pd.Series([0] * len(X_h)))
+                    tickers_h = (X_h.pop("ticker")
+                                 if "ticker" in X_h.columns
+                                 else pd.Series([""] * len(X_h)))
+                    for c in model._feature_names:
+                        if c not in X_h.columns:
+                            X_h[c] = 0.5
+                    h_preds = model.predict_proba(X_h[model._feature_names].values)
 
-                h_preds = model.predict_proba(X_h[model._feature_names].values)
+                    # Holdout IC
+                    ic_val, _ = spearmanr(h_preds, holdout_forward_returns)
+                    holdout_ic = round(float(ic_val), 4) if np.isfinite(ic_val) else None
+                    logger.info(
+                        f"Holdout IC (out-of-sample, {len(holdout_feature_rows)} rows): "
+                        f"{holdout_ic}"
+                    )
 
-                # Holdout IC
-                ic_val, _ = spearmanr(h_preds, holdout_forward_returns)
-                holdout_ic = round(float(ic_val), 4) if np.isfinite(ic_val) else None
-                logger.info(
-                    f"Holdout IC (out-of-sample, {len(holdout_feature_rows)} rows): "
-                    f"{holdout_ic}"
-                )
+                    # Date lookup for period examples labels
+                    period_dates: dict[int, str] = {}
+                    ref_prices = next(iter(price_series.values()))
+                    for p_idx in range(n_periods):
+                        si = p_idx * rebalance_days
+                        ei = si + forward_days
+                        if ei < len(ref_prices):
+                            sd = ref_prices.index[si]
+                            ed = ref_prices.index[ei]
+                            period_dates[p_idx] = (
+                                f"{sd.strftime('%b %Y')} → {ed.strftime('%b %Y')}"
+                            )
 
-                # Date lookup: map period index → "MMM YYYY → MMM YYYY"
-                period_dates: dict[int, str] = {}
-                ref_prices = next(iter(price_series.values()))
-                for p_idx in range(n_periods):
-                    si = p_idx * rebalance_days
-                    ei = si + forward_days
-                    if ei < len(ref_prices):
-                        sd = ref_prices.index[si]
-                        ed = ref_prices.index[ei]
-                        period_dates[p_idx] = (
-                            f"{sd.strftime('%b %Y')} → {ed.strftime('%b %Y')}"
+                    # Per-period prediction examples (holdout only)
+                    df_ex = pd.DataFrame({
+                        "period":        period_idxs_h.values,
+                        "ticker":        tickers_h.values,
+                        "model_score":   h_preds,
+                        "pred_top":      (h_preds >= 0.5),
+                        "actual_return": holdout_forward_returns,
+                        "actual_top":    np.array(holdout_return_labels, dtype=bool),
+                    })
+                    df_ex["correct"] = df_ex["pred_top"] == df_ex["actual_top"]
+
+                    for p_idx, grp_ex in df_ex.groupby("period"):
+                        grp_ex = grp_ex.sort_values("model_score", ascending=False)
+                        period_examples.append({
+                            "period":       int(p_idx),
+                            "date_range":   period_dates.get(int(p_idx), f"Period {p_idx}"),
+                            "n_stocks":     len(grp_ex),
+                            "hit_rate_pct": round(float(grp_ex["correct"].mean()) * 100, 1),
+                            "stocks": [
+                                {
+                                    "ticker":            str(row["ticker"]),
+                                    "model_score":       round(float(row["model_score"]) * 100, 1),
+                                    "predicted_top":     bool(row["pred_top"]),
+                                    "actual_return_pct": round(float(row["actual_return"]) * 100, 1),
+                                    "actual_top":        bool(row["actual_top"]),
+                                    "correct":           bool(row["correct"]),
+                                }
+                                for _, row in grp_ex.iterrows()
+                            ],
+                        })
+
+                # ── 3. Combined scored df for ALL periods ──────────────────
+                train_period_idxs  = [r.get("_period_idx", i)
+                                       for i, r in enumerate(all_feature_rows)]
+                train_tickers_list = [r.get("ticker", "") for r in all_feature_rows]
+
+                all_period_idxs_ml = train_period_idxs + list(period_idxs_h)
+                all_tickers_ml     = train_tickers_list + list(tickers_h)
+                all_ml_scores      = (np.concatenate([train_scores, h_preds])
+                                      if len(h_preds) else train_scores)
+                all_actual_rets_ml = all_forward_returns + holdout_forward_returns
+
+                df_ml = pd.DataFrame({
+                    "period":        all_period_idxs_ml,
+                    "ticker":        all_tickers_ml,
+                    "ml_score":      all_ml_scores,
+                    "actual_return": all_actual_rets_ml,
+                })
+
+                # ── 4. Per-period metrics from ML scores ───────────────────
+                for p_idx, grp in df_ml.groupby("period"):
+                    if p_idx not in bench_ret_by_period:
+                        continue
+
+                    benchmark_returns.append(bench_ret_by_period[p_idx])
+
+                    # IC (ML score vs actual return)
+                    if len(grp) > 1 and grp["ml_score"].nunique() > 1:
+                        ic, _ = spearmanr(grp["ml_score"], grp["actual_return"])
+                        if np.isfinite(ic):
+                            period_ics.append(float(ic))
+
+                    # Hit rate (does ML top half beat bottom half by avg return?)
+                    med_score = grp["ml_score"].median()
+                    top_ret   = grp.loc[grp["ml_score"] >= med_score, "actual_return"].tolist()
+                    bot_ret   = grp.loc[grp["ml_score"] <  med_score, "actual_return"].tolist()
+                    if top_ret and bot_ret:
+                        period_hit_rates.append(
+                            1 if np.mean(top_ret) > np.mean(bot_ret) else 0
                         )
 
-                # Per-period breakdown
-                df_ex = pd.DataFrame({
-                    "period":        period_idxs.values,
-                    "ticker":        tickers_h.values,
-                    "model_score":   h_preds,
-                    "pred_top":      (h_preds >= 0.5),
-                    "actual_return": holdout_forward_returns,
-                    "actual_top":    np.array(holdout_return_labels, dtype=bool),
-                })
-                df_ex["correct"] = df_ex["pred_top"] == df_ex["actual_top"]
+                    # Top-quintile portfolio
+                    n_top   = max(1, len(grp) // 5)
+                    top_grp = grp.nlargest(n_top, "ml_score")
+                    portfolio_returns.append(float(top_grp["actual_return"].mean()))
 
-                for p_idx, grp in df_ex.groupby("period"):
-                    grp = grp.sort_values("model_score", ascending=False)
-                    period_examples.append({
-                        "period":       int(p_idx),
-                        "date_range":   period_dates.get(int(p_idx), f"Period {p_idx}"),
-                        "n_stocks":     len(grp),
-                        "hit_rate_pct": round(float(grp["correct"].mean()) * 100, 1),
-                        "stocks": [
-                            {
-                                "ticker":            str(row["ticker"]),
-                                "model_score":       round(float(row["model_score"]) * 100, 1),
-                                "predicted_top":     bool(row["pred_top"]),
-                                "actual_return_pct": round(float(row["actual_return"]) * 100, 1),
-                                "actual_top":        bool(row["actual_top"]),
-                                "correct":           bool(row["correct"]),
-                            }
-                            for _, row in grp.iterrows()
-                        ],
-                    })
+                    # Turnover
+                    curr_set = set(top_grp["ticker"].tolist())
+                    if prev_top_set:
+                        turnovers.append(
+                            1 - len(curr_set & prev_top_set) / max(len(curr_set), 1)
+                        )
+                    prev_top_set = curr_set
+
+                ic_now = np.mean(period_ics) if period_ics else 0.0
+                logger.info(
+                    f"ML metrics: {len(portfolio_returns)} periods | "
+                    f"IC={ic_now:.4f} | holdout_IC={holdout_ic}"
+                )
 
             except Exception as e:
-                logger.warning(f"Could not compute holdout analysis: {e}")
+                logger.error(f"ML metrics computation failed: {e}", exc_info=True)
 
         holdout_note = (
             f"Holdout IC (out-of-sample): {holdout_ic:.4f}. "
