@@ -35,7 +35,7 @@ from scipy.stats import spearmanr
 import logging
 from pathlib import Path
 
-from .feature_engineering import FEATURE_COLS
+from .feature_engineering import FEATURE_COLS, PRICE_FEATURE_COLS
 from .model import NUMKTEnsemble
 
 logger = logging.getLogger(__name__)
@@ -242,11 +242,19 @@ def run_backtest(
         rv = [fwd_rets[t] for t in common]
 
         # ── Collect training data for this period ──────────────────────────
+        # Only price-derived rank features are included in training rows.
+        # Fundamental ratios (PE, ROE, etc.) are excluded because Yahoo only
+        # provides today's values — using them for historical windows would
+        # leak future information into the model (look-ahead bias).
         if train_model:
             median_ret = np.median(rv)
             for ticker, ret in zip(common, rv):
                 if ticker in snap_df.index:
-                    row_dict = snap_df.loc[ticker].to_dict()
+                    row_dict = {
+                        f"{col}_rank": float(snap_df.loc[ticker].get(f"{col}_rank", 0.5))
+                        for col in PRICE_FEATURE_COLS
+                        if f"{col}_rank" in snap_df.columns
+                    }
                     row_dict["ticker"] = ticker
                     all_feature_rows.append(row_dict)
                     # Label: 1 if this stock beat the equal-weight median

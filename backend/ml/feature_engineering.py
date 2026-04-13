@@ -47,6 +47,20 @@ FEATURE_COLS = [
     "price_vs_52w_high",
 ]
 
+# Subset of FEATURE_COLS that can be computed purely from price history.
+# These are the ONLY features used when training on historical windows —
+# fundamental ratios (PE, ROE, etc.) come from today's Yahoo snapshot and
+# must not be used for historical periods to avoid look-ahead bias.
+PRICE_FEATURE_COLS = [
+    "mom_1m",
+    "mom_3m",
+    "mom_6m",
+    "mom_12m",
+    "vol_60d",
+    "rsi_14",
+    "price_vs_52w_high",
+]
+
 
 def _safe(val, default=np.nan):
     """Return val if it's a finite float, else default."""

@@ -51,7 +51,7 @@ import logging
 from pathlib import Path
 from datetime import datetime
 
-from .feature_engineering import FEATURE_COLS
+from .feature_engineering import FEATURE_COLS, PRICE_FEATURE_COLS
 
 logger = logging.getLogger(__name__)
 
@@ -325,11 +325,12 @@ class NUMKTEnsemble:
         cached price series and generate non-overlapping (features, label)
         pairs stepping through the history.
 
-        Price-derived features (momentum, vol, RSI, price_vs_52w_high) are
-        computed from the price history available at each window start — no
-        lookahead bias. Static fundamentals (P/E, ROE etc.) use today's Yahoo
-        values, an acknowledged limitation since Yahoo does not provide
-        historical fundamental snapshots.
+        Only price-derived features (momentum, vol, RSI, price_vs_52w_high)
+        are used here — all computable from price history at each window start
+        with no look-ahead bias. Fundamental ratios (PE, ROE, etc.) are
+        intentionally excluded: Yahoo Finance only provides today's values, so
+        using them in historical windows would leak future information into
+        training labels.
 
         Each row is tagged with _time_idx = t_start so that
         _fit_from_price_cache can sort observations chronologically before
@@ -350,19 +351,6 @@ class NUMKTEnsemble:
 
         if len(price_series) < 3:
             return [], [], []
-
-        # Static fundamentals from today's snapshot (historical values unavailable via Yahoo)
-        static_features: dict[str, dict] = {}
-        if "ticker" in features_df.columns:
-            for _, row in features_df.iterrows():
-                t = row.get("ticker", "")
-                if t:
-                    static_features[t] = {
-                        col: row.get(col, np.nan)
-                        for col in ["pe_ratio", "pb_ratio", "roe", "net_margin",
-                                    "revenue_growth", "debt_equity", "dividend_yield",
-                                    "beta", "log_mktcap"]
-                    }
 
         min_len   = min(len(s) for s in price_series.values())
         n_windows = (min_len - horizon) // horizon
@@ -387,7 +375,7 @@ class NUMKTEnsemble:
                 if len(p) < 5:
                     continue
 
-                snap: dict = dict(static_features.get(ticker, {}))
+                snap: dict = {}  # price-derived features only — no fundamentals
 
                 # Momentum at this historical point
                 for days, key in [(21, "mom_1m"), (63, "mom_3m"),
@@ -419,9 +407,11 @@ class NUMKTEnsemble:
             if len(raw_snaps) < 3:
                 continue
 
-            # Cross-sectional rank normalisation at this window's point in time
+            # Cross-sectional rank normalisation at this window's point in time.
+            # Only price-derived cols are present in snap_df — fundamentals are
+            # excluded to prevent look-ahead bias from today's Yahoo data.
             snap_df = pd.DataFrame(raw_snaps).T
-            for col in FEATURE_COLS:
+            for col in PRICE_FEATURE_COLS:
                 if col in snap_df.columns and snap_df[col].notna().sum() > 1:
                     snap_df[col + "_rank"] = snap_df[col].rank(pct=True)
                 elif col + "_rank" not in snap_df.columns:
