@@ -375,7 +375,7 @@ select{width:100%;padding:6px 9px;border-radius:var(--r);border:1px solid var(--
         <div style="font-size:11px;color:var(--ink3);line-height:1.7">
           Click <strong>Run Backtest</strong> to measure model quality using walk-forward analysis.
           Requires the Python backend to be connected (live data mode).
-          Metrics include Hit Rate, Information Coefficient, Sharpe Ratio, Max Drawdown, and Alpha.
+          Metrics include Group Hit Rate (did ML top half beat bottom half?), Information Coefficient, Sharpe Ratio, Max Drawdown, and Alpha.
         </div>
       </div>
     </div>
@@ -1330,9 +1330,9 @@ async function runBacktest(){
     </div>
     <div class="bt-grid">
       <div class="bt-metric">
-        <div class="bt-lbl">Hit Rate</div>
+        <div class="bt-lbl">Group Hit Rate</div>
         <div class="bt-val" style="color:${metricColor(m.hit_rate,55,45)}">${m.hit_rate!=null?m.hit_rate+'%':'—'}</div>
-        <div class="bt-interp">${m.interpretation?.hit_rate||''}</div>
+        <div class="bt-interp">Top half beat bottom half</div>
       </div>
       <div class="bt-metric">
         <div class="bt-lbl">Info. Coeff.</div>
