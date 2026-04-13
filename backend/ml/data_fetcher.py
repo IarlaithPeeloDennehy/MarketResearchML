@@ -238,6 +238,8 @@ async def fetch_stock_data(ticker: str, lookback_years: int = 5) -> dict | None:
                           if last_price and price_1y_ago else None,
         "momentum_3m":    round(last_price / price_3m_ago - 1, 4)
                           if last_price and price_3m_ago else None,
+        "inst_ownership": info.get("heldPercentInstitutions"),
+        "insider_ownership": info.get("heldPercentInsiders"),
         "_raw": result,
     }
 
@@ -328,8 +330,10 @@ async def _build_flat(ticker: str, result: dict) -> dict | None:
             "debt_equity":    info.get("debtToEquity"),
             "dividend_yield": info.get("dividendYield"),
             "beta":           info.get("beta"),
-            "momentum_12m":   round(last_price/price_1y_ago-1,4) if price_1y_ago else None,
-            "momentum_3m":    round(last_price/price_3m_ago-1,4) if price_3m_ago else None,
+            "momentum_12m":      round(last_price/price_1y_ago-1,4) if price_1y_ago else None,
+            "momentum_3m":       round(last_price/price_3m_ago-1,4) if price_3m_ago else None,
+            "inst_ownership":    info.get("heldPercentInstitutions"),
+            "insider_ownership": info.get("heldPercentInsiders"),
             "_raw": result,
         }
     except Exception as e:

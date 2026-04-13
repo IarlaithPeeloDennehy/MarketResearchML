@@ -149,7 +149,7 @@ async def analyse(req: AnalyseRequest):
 
         results = score_universe(
             model=model, features_df=features_df, raw_data=raw_data,
-            profile=req.profile, risk=req.risk, use_macro=req.use_macro,
+            profile=req.profile, risk=req.risk,
         )
 
         # Cache for backtest

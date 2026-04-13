@@ -10,10 +10,9 @@ Signal thresholds (tunable):
   else          →  SELL
 
 Each result includes:
-  - composite_score    (0–100, from model probability)
-  - fundamental_score  (pure factor score, before quant/macro adjustments)
+  - composite_score    (0–100, from model probability minus risk penalty)
+  - fundamental_score  (raw ML model probability)
   - ff5_scores         (Fama-French 5-factor decomposition)
-  - macro_adjustment   (rate/FX/VIX overlay)
   - signal             (STRONG BUY / BUY / HOLD / SELL)
   - buy_reasons        (list of plain-English reasons, derived from factors)
   - key_fundamentals   (subset of data for display)
@@ -28,55 +27,6 @@ from .feature_engineering import FEATURE_COLS, extract_snapshot_features
 from .model import NUMKTEnsemble
 
 logger = logging.getLogger(__name__)
-
-# Macro environment — in production these would come from a live data source
-# (e.g., FRED API or Alpha Vantage macro endpoint)
-MACRO = {
-    "fed_rate":    5.25,
-    "inflation":   3.1,
-    "vix":         18.5,
-    "t10":         4.35,
-    "eur_usd":     1.085,
-    "gbp_usd":     1.265,
-}
-
-# Hedge fund baseline positioning (sector-level 13F signals)
-HF_SIGNALS = {
-    "Technology":       {"conviction": "High",         "trend": "Accumulating", "adj":  0.04},
-    "Healthcare":       {"conviction": "Medium",       "trend": "Selective",    "adj":  0.01},
-    "Financials":       {"conviction": "Medium-High",  "trend": "Accumulating", "adj":  0.03},
-    "Energy":           {"conviction": "Low-Medium",   "trend": "Trimming",     "adj": -0.02},
-    "Consumer Staples": {"conviction": "Low",          "trend": "Underweight",  "adj": -0.03},
-    "Consumer Disc.":   {"conviction": "Medium",       "trend": "Mixed",        "adj":  0.01},
-    "Materials":        {"conviction": "Medium",       "trend": "Neutral",      "adj":  0.00},
-    "Industrials":      {"conviction": "Medium-High",  "trend": "Accumulating", "adj":  0.02},
-    "Telecom":          {"conviction": "Low",          "trend": "Underweight",  "adj": -0.03},
-    "Utilities":        {"conviction": "Low",          "trend": "Neutral",      "adj": -0.01},
-    "Real Estate":      {"conviction": "Low",          "trend": "Neutral",      "adj": -0.01},
-}
-
-
-def _macro_adjustment(sector: str, market: str) -> float:
-    """
-    Rate/FX/VIX overlay. Adds or subtracts from composite score.
-    These are small adjustments (±5%) to reflect macro regime.
-    """
-    adj = 0.0
-    if sector == "Financials":
-        adj += 0.03 if MACRO["fed_rate"] > 4 else -0.02
-    if sector in ("Technology", "Consumer Disc."):
-        adj += -0.025 if MACRO["fed_rate"] > 5 else 0.01
-    if sector == "Utilities":
-        adj += -0.03 if MACRO["fed_rate"] > 4.5 else 0.01
-    if sector == "Energy":
-        adj += 0.015 if MACRO["inflation"] > 3 else -0.01
-    if MACRO["vix"] > 25:
-        adj -= 0.02  # risk-off environment hurts all equities
-    if market == "UK":
-        adj += (MACRO["gbp_usd"] - 1.25) * 0.06
-    if market == "IE":
-        adj += (MACRO["eur_usd"] - 1.08) * 0.06
-    return round(adj, 4)
 
 
 def _ff5_decomposition(row: pd.Series) -> dict:
@@ -114,7 +64,7 @@ def _get_signal(score: float) -> str:
     return "SELL"
 
 
-def _build_reasons(row: pd.Series, signal: str) -> list[str]:
+def _build_reasons(row: pd.Series, signal: str, inst_pct: float | None, insider_pct: float | None) -> list[str]:
     """Generate plain-English factor reasons for the signal."""
     reasons = []
     pe  = row.get("pe_ratio")
@@ -124,8 +74,6 @@ def _build_reasons(row: pd.Series, signal: str) -> list[str]:
     rg  = row.get("revenue_growth")
     m12 = row.get("mom_12m")
     dy  = row.get("dividend_yield")
-    beta = row.get("beta")
-    sector = row.get("sector", "")
 
     is_buy = signal in ("STRONG BUY", "BUY")
 
@@ -141,12 +89,13 @@ def _build_reasons(row: pd.Series, signal: str) -> list[str]:
         if rg and rg > 0.12:
             reasons.append(f"Revenue growing at {rg*100:.0f}% — compounding top-line momentum")
         if m12 and m12 > 0.15:
-            reasons.append(f"Strong 12M momentum (+{m12*100:.0f}%) — institutional accumulation visible")
+            reasons.append(f"Strong 12M momentum (+{m12*100:.0f}%)")
         if dy and dy > 0.03:
             reasons.append(f"Dividend yield of {dy*100:.1f}% — income with quality backing")
-        hf = HF_SIGNALS.get(sector)
-        if hf and hf["adj"] > 0.01:
-            reasons.append(f"{sector} sector: hedge funds {hf['trend'].lower()} ({hf['conviction']} conviction)")
+        if inst_pct and inst_pct > 0.70:
+            reasons.append(f"{inst_pct*100:.0f}% institutional ownership — strong professional conviction")
+        if insider_pct and insider_pct > 0.10:
+            reasons.append(f"Insiders hold {insider_pct*100:.0f}% — management aligned with shareholders")
     else:
         if pe and pe > 50:
             reasons.append(f"Stretched P/E of {pe:.0f}x requires perfect execution")
@@ -158,9 +107,8 @@ def _build_reasons(row: pd.Series, signal: str) -> list[str]:
             reasons.append(f"Declining revenues ({rg*100:.0f}%) — structural headwinds")
         if mg and mg < 0.05:
             reasons.append(f"Very thin margins ({mg*100:.1f}%) — limited operational resilience")
-        hf = HF_SIGNALS.get(sector)
-        if hf and hf["adj"] < -0.01:
-            reasons.append(f"{sector} sector: institutions {hf['trend'].lower()}")
+        if inst_pct and inst_pct < 0.30:
+            reasons.append(f"Low institutional interest ({inst_pct*100:.0f}%) — limited professional coverage")
 
     return reasons[:4]
 
@@ -171,10 +119,10 @@ def score_universe(
     raw_data: dict,
     profile: str,
     risk: str,
-    use_macro: bool = True,
 ) -> list[dict]:
     """
     Scores every stock in the universe and returns a ranked list.
+    composite_score = ML model probability - risk penalty (clipped to [0.05, 0.97]).
     """
     # Build feature matrix for prediction
     feat_cols = model._feature_names
@@ -199,29 +147,23 @@ def score_universe(
 
         fund_score = float(proba[i])
 
-        # Macro adjustment
-        macro_adj = _macro_adjustment(sector, market) if use_macro else 0.0
-
-        # HF signal adjustment
-        hf_data = HF_SIGNALS.get(sector, {})
-        hf_adj  = hf_data.get("adj", 0.0) * 0.5  # dampen HF signal
-
         # Risk penalty for high-beta stocks
         beta = row.get("beta", 1.0) or 1.0
         risk_penalty = 0.0
         if risk == "low"    and beta > 0.8:  risk_penalty = (beta - 0.8) * 0.15
         if risk == "medium" and beta > 1.5:  risk_penalty = (beta - 1.5) * 0.10
 
-        # Composite score (clipped to [0.05, 0.97])
-        composite = float(np.clip(fund_score + macro_adj + hf_adj - risk_penalty, 0.05, 0.97))
+        # Composite score: ML probability minus risk penalty only
+        composite = float(np.clip(fund_score - risk_penalty, 0.05, 0.97))
+
+        # Real ownership data from Yahoo Finance
+        stock = raw_data.get(ticker, {})
+        inst_pct    = _fmt(stock.get("inst_ownership"))
+        insider_pct = _fmt(stock.get("insider_ownership"))
 
         signal   = _get_signal(composite)
         ff5      = _ff5_decomposition(row)
-        reasons  = _build_reasons(row, signal)
-
-        # Build clean output dict
-        stock = raw_data.get(ticker, {})
-        info  = (stock.get("_raw") or {}).get("info", {}) if "_raw" in stock else {}
+        reasons  = _build_reasons(row, signal, inst_pct, insider_pct)
 
         result = {
             "ticker":           ticker,
@@ -231,18 +173,14 @@ def score_universe(
             "last_price":       round(float(row.get("last_price", 0) or 0), 2),
             "currency":         stock.get("currency", "USD"),
             "market_cap_bn":    stock.get("market_cap_bn"),
-            "signal":           signal,
-            "is_buy":           signal in ("STRONG BUY", "BUY"),
-            "composite_score":  round(composite * 100, 1),
-            "fundamental_score":round(fund_score * 100, 1),
-            "macro_adjustment": round(macro_adj * 100, 2),
-            "hf_adjustment":    round(hf_adj * 100, 2),
-            "ff5":              ff5,
-            "buy_reasons":      reasons,
-            "hf_positioning":   {
-                "conviction": hf_data.get("conviction", "N/A"),
-                "trend":      hf_data.get("trend", "N/A"),
-            },
+            "signal":              signal,
+            "is_buy":              signal in ("STRONG BUY", "BUY"),
+            "composite_score":     round(composite * 100, 1),
+            "fundamental_score":   round(fund_score * 100, 1),
+            "inst_ownership_pct":  round(inst_pct * 100, 1) if inst_pct is not None else None,
+            "insider_ownership_pct": round(insider_pct * 100, 1) if insider_pct is not None else None,
+            "ff5":                 ff5,
+            "buy_reasons":         reasons,
             "fundamentals": {
                 "pe_ratio":       _fmt(row.get("pe_ratio")),
                 "pb_ratio":       _fmt(row.get("pb_ratio")),

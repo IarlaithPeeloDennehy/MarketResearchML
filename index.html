@@ -296,8 +296,6 @@ select{width:100%;padding:6px 9px;border-radius:var(--r);border:1px solid var(--
     <input type="range" min="2" max="10" value="5" id="depthSlider">
     <div class="param-row" style="margin-top:9px"><span class="param-label">CV folds</span><span class="param-value" id="foldVal">5</span></div>
     <input type="range" min="3" max="10" value="5" id="foldSlider">
-    <div class="param-row" style="margin-top:9px"><span class="param-label">HF signal weight</span><span class="param-value" id="hfwVal">20%</span></div>
-    <input type="range" min="0" max="40" value="20" id="hfwSlider">
   </div>
 
   <div class="sb-section">
@@ -329,8 +327,6 @@ select{width:100%;padding:6px 9px;border-radius:var(--r);border:1px solid var(--
 
   <div class="sb-section">
     <div class="sb-label">Model Layers</div>
-    <div class="tog-row"><span class="tog-label">HF 13F positioning signals</span><label class="tog"><input type="checkbox" id="hfToggle" checked><span class="tog-sl"></span></label></div>
-    <div class="tog-row"><span class="tog-label">Macro overlay (rates, FX, CPI)</span><label class="tog"><input type="checkbox" id="macroToggle" checked><span class="tog-sl"></span></label></div>
     <div class="tog-row"><span class="tog-label">Fama-French 5-factor model</span><label class="tog"><input type="checkbox" id="quantToggle" checked><span class="tog-sl"></span></label></div>
     <div class="tog-row"><span class="tog-label">Geopolitical risk overlay</span><label class="tog"><input type="checkbox" id="geoToggle"><span class="tog-sl"></span></label></div>
   </div>
@@ -341,12 +337,12 @@ select{width:100%;padding:6px 9px;border-radius:var(--r);border:1px solid var(--
 <main class="main">
   <div class="welcome" id="welcomeScreen">
     <div class="w-headline">Select your universe,<br><em>run the model.</em></div>
-    <p style="font-size:12px;color:var(--ink3);max-width:440px;line-height:1.75">Search and add stocks from the US, UK and Irish markets. The ensemble ML model layers fundamental factors, Fama-French quant analysis, and hedge fund 13F positioning to produce clear BUY, HOLD and SELL signals.</p>
+    <p style="font-size:12px;color:var(--ink3);max-width:440px;line-height:1.75">Search and add stocks from the US, UK and Irish markets. The ensemble ML model layers fundamental factors and Fama-French quant analysis to produce clear BUY, HOLD and SELL signals.</p>
     <div class="w-cards">
       <div class="w-card"><div class="w-num">80+</div>Stocks</div>
       <div class="w-card"><div class="w-num">3</div>Markets</div>
       <div class="w-card ac1"><div class="w-num">FF5</div>Quant</div>
-      <div class="w-card ac2"><div class="w-num">13F</div>HF Data</div>
+      <div class="w-card ac2"><div class="w-num">ML</div>Ensemble</div>
       <div class="w-card ac3"><div class="w-num">BUY</div>Signals</div>
     </div>
   </div>
@@ -529,23 +525,6 @@ const PROFILES={
   activist: {l:'Activist/Deep Value', w:{pe:-0.35,pb:-0.30,roe:0.15,de:-0.10,dy:0.08,rg:0.02,mg:0.08,m12:-0.04,m3:-0.02}},
 };
 const RISK={low:{bp:0.35,mb:0.8},medium:{bp:0.10,mb:1.5},high:{bp:0.00,mb:99}};
-const MACRO={fedRate:5.25,inflation:3.1,gdp:2.6,vix:18.5,dxy:104,t10:4.35,eurUsd:1.085,gbpUsd:1.265};
-
-/* HF baseline data */
-const HF_DATA={
-  Technology:     {conviction:'High',      trend:'Accumulating', funds:['Coatue','Tiger Global','Appaloosa'],  note:'AI infrastructure cycle driving record institutional inflows into semis and cloud.'},
-  Healthcare:     {conviction:'Medium',    trend:'Selective',    funds:['Baupost','Pershing Square'],           note:'GLP-1 tailwinds dominate; HFs rotating from managed care into innovative pharma.'},
-  Financials:     {conviction:'Medium-High',trend:'Accumulating',funds:['Berkshire','Third Point','ValueAct'], note:'Rate normalisation improving NIM; European and EM banks seeing value re-rating.'},
-  Energy:         {conviction:'Low-Medium',trend:'Trimming',     funds:['BP Capital','Baupost'],               note:'Energy transition headwinds; HFs rotating toward cleaner transition plays.'},
-  'Consumer Staples':{conviction:'Low',   trend:'Underweight',  funds:['Pershing Square'],                    note:'Margin pressure from input costs; limited pricing power in normalised inflation.'},
-  'Consumer Disc.':{conviction:'Medium',  trend:'Mixed',        funds:['Coatue','D1 Capital'],                note:'Platform e-commerce strong; discretionary retail more cautious.'},
-  Materials:      {conviction:'Medium',   trend:'Neutral',      funds:['Greenlight','Elliott'],               note:'Infrastructure spend supportive; Elliott building positions in mining majors.'},
-  Industrials:    {conviction:'Medium-High',trend:'Accumulating',funds:['Starboard','ValueAct'],              note:'Reshoring, defence, and infrastructure rotation driving HF conviction.'},
-  Telecom:        {conviction:'Low',      trend:'Underweight',  funds:[],                                     note:'Secular revenue pressure and capex intensity keeping HFs underweight.'},
-  Utilities:      {conviction:'Low',      trend:'Neutral',      funds:[],                                     note:'Rate-sensitive; limited growth. Defensive positioning only in risk-off regimes.'},
-  'Real Estate':  {conviction:'Low',      trend:'Neutral',      funds:[],                                     note:'Rising rates compressed REIT valuations; selective opportunities in logistics REITs.'},
-  Media:          {conviction:'Low',      trend:'Trimming',     funds:[],                                     note:'Legacy media under pressure; HFs reducing exposure to print/broadcast.'},
-};
 
 let activeMkt='US';
 let selectedTickers=new Set(['AAPL','MSFT','NVDA','JPM','BRK-B','META','JNJ','PG','SHEL.L','AZN.L','CRH','A5G.IR','RYAAY']);
@@ -614,7 +593,6 @@ sb('lbSlider','lbVal',v=>`${v} yr`);
 sb('lamSlider','lamVal',v=>(v/100).toFixed(2));
 sb('depthSlider','depthVal',v=>v);
 sb('foldSlider','foldVal',v=>v);
-sb('hfwSlider','hfwVal',v=>`${v}%`);
 
 /* ── NORMALISE ── */
 function norm(vals){
@@ -639,30 +617,9 @@ function ff5(stocks){
   }));
 }
 
-/* ── MACRO SCORE ── */
-function macroAdj(s){
-  let sc=0;
-  if(s.s==='Financials')sc+=MACRO.fedRate>4?0.03:-0.02;
-  if(s.s==='Technology'||s.s==='Consumer Disc.')sc+=MACRO.fedRate>5?-0.025:0.01;
-  if(s.s==='Utilities')sc+=MACRO.fedRate>4.5?-0.03:0.01;
-  if(s.s==='Energy')sc+=MACRO.inflation>3?0.015:-0.01;
-  if(MACRO.vix>25&&s.beta>1.3)sc-=0.04;
-  if(s.m==='UK')sc+=(MACRO.gbpUsd-1.25)*0.08;
-  if(s.m==='IE')sc+=(MACRO.eurUsd-1.08)*0.08;
-  return sc;
-}
-
-/* ── HF SCORE ── */
-function hfScore(s,hfWt){
-  const d=HF_DATA[s.s];
-  if(!d)return 0;
-  const cm={'High':0.06,'Medium-High':0.04,'Medium':0.01,'Low-Medium':-0.02,'Low':-0.04};
-  const tm={'Accumulating':0.03,'Selective':0.01,'Neutral':0,'Mixed':-0.01,'Trimming':-0.03,'Underweight':-0.04};
-  return ((cm[d.conviction]||0)+(tm[d.trend]||0))*(hfWt/100)*2.5;
-}
 
 /* ── COMPUTE SCORES ── */
-function computeScores(stocks,profile,risk,lambda,hfWt,useHF,useMacro,useFF5){
+function computeScores(stocks,profile,risk,lambda,useFF5){
   const w=profile.w,rp=RISK[risk];
   const feats=['pe','pb','roe','de','dy','rg','mg','m12','m3'];
   const nd={};feats.forEach(f=>{nd[f]=norm(stocks.map(s=>s[f]));});
@@ -676,19 +633,15 @@ function computeScores(stocks,profile,risk,lambda,hfWt,useHF,useMacro,useFF5){
     let fund=Math.max(0,Math.min(1,raw-betaPen-l2+0.42));
 
     const q=useFF5?(ff[i].hml+ff[i].rmw+ff[i].cma+ff[i].mom)*0.35:0;
-    const ma=useMacro?macroAdj(s):0;
-    const hf=useHF?hfScore(s,hfWt):0;
 
-    const composite=fund+q+ma+hf;
+    const composite=fund+q;
     const noise=(Math.random()-0.5)*0.028;
     return{
       ...s,
-      score:   Math.max(0.04,Math.min(0.97,composite+noise)),
-      fundScore:+fund.toFixed(3),
+      score:     Math.max(0.04,Math.min(0.97,composite+noise)),
+      fundScore: +fund.toFixed(3),
       quantScore:+((ff[i].alphaEst*100+50)).toFixed(1),
-      macroAdj: +ma.toFixed(3),
-      hfAdj:    +hf.toFixed(3),
-      ff:       ff[i],
+      ff:        ff[i],
     };
   });
 }
@@ -727,12 +680,6 @@ function buildBuyReasons(s,profile){
   feats.filter(f=>f.good&&Math.abs(w[f.k]||0)>0.03).forEach(f=>{
     reasons.push(`${f.val} — ${f.lbl}`);
   });
-  // FF5 signal
-  const d=HF_DATA[s.s];
-  if(d&&(d.trend==='Accumulating'||d.conviction==='High'))
-    reasons.push(`${s.s} sector: hedge funds ${d.trend.toLowerCase()} (${d.conviction} conviction)`);
-  if(macroAdj(s)>0.01)
-    reasons.push(`Macro tailwind: sector benefits from current rate/FX environment`);
   return reasons.slice(0,4);
 }
 
@@ -743,11 +690,6 @@ function buildSellReasons(s,profile){
   if(s.de>2.0)  reasons.push(`High leverage at ${s.de.toFixed(2)}x D/E — elevated refinancing risk`);
   if(s.rg<0.0)  reasons.push(`Declining revenues — structural headwinds or competitive pressure`);
   if(s.mg<0.05) reasons.push(`Very thin margins — limited operational resilience`);
-  const d=HF_DATA[s.s];
-  if(d&&(d.trend==='Trimming'||d.trend==='Underweight'))
-    reasons.push(`${s.s} sector: institutional investors ${d.trend.toLowerCase()}`);
-  if(macroAdj(s)<-0.01)
-    reasons.push(`Macro headwind: sector faces pressure from current rate/FX environment`);
   return reasons.slice(0,4);
 }
 
@@ -759,9 +701,6 @@ async function runAnalysis(){
   const riskKey=document.getElementById('riskSel').value;
   const lambda=+document.getElementById('lamSlider').value/100;
   const folds=+document.getElementById('foldSlider').value;
-  const hfWt=+document.getElementById('hfwSlider').value;
-  const useHF=document.getElementById('hfToggle').checked;
-  const useMacro=document.getElementById('macroToggle').checked;
   const useFF5=document.getElementById('quantToggle').checked;
   const useGeo=document.getElementById('geoToggle').checked;
   const profile=PROFILES[profileKey];
@@ -784,7 +723,6 @@ async function runAnalysis(){
       'Training Random Forest (300 trees)',
       'Training Gradient Boosting ensemble',
       'Blending predictions + FF5 factors',
-      'Applying macro & HF overlays',
       'Generating BUY / HOLD / SELL signals',
     ];
   } else {
@@ -796,8 +734,6 @@ async function runAnalysis(){
       'Blending model predictions',
     ];
     if(useFF5) steps.push('Computing Fama-French 5-factor model');
-    if(useMacro)steps.push('Applying macro overlay (Fed rate, FX, VIX)');
-    if(useHF)  steps.push('Integrating hedge fund 13F positioning');
     steps.push('Generating BUY / HOLD / SELL signals');
   }
 
@@ -821,8 +757,6 @@ async function runAnalysis(){
       lookback_years: +document.getElementById('lbSlider').value,
       cv_folds: folds,
       lambda_reg: lambda,
-      use_macro: useMacro,
-      use_hf_signals: useHF,
     });
 
     // Animate remaining steps
@@ -862,8 +796,8 @@ async function runAnalysis(){
         p:          br.last_price||local.p||0,
         score:      br.composite_score/100,
         fundScore:  br.fundamental_score/100,
-        macroAdj:   br.macro_adjustment/100,
-        hfAdj:      br.hf_adjustment/100,
+        instPct:    br.inst_ownership_pct,
+        insiderPct: br.insider_ownership_pct,
         ff:         mapFF5(br.ff5),
         signal:     br.signal,
         buyReasons: br.buy_reasons||[],
@@ -881,7 +815,7 @@ async function runAnalysis(){
       };
     });
   } else {
-    scored = computeScores(selArr,profile,riskKey,lambda,hfWt,useHF,useMacro,useFF5);
+    scored = computeScores(selArr,profile,riskKey,lambda,useFF5);
     scored.sort((a,b)=>b.score-a.score);
     scored.forEach(s=>{
       s.signal=getSignal(s.score);
@@ -890,7 +824,7 @@ async function runAnalysis(){
     });
   }
 
-  runResults={scored,profileKey,riskKey,profile,useHF,useMacro,useFF5,hfWt,folds,lambda,
+  runResults={scored,profileKey,riskKey,profile,useFF5,folds,lambda,
               cvAccuracy,featureImportance,backendLive};
   overlay.style.display='none';
   renderResults(runResults);
@@ -929,7 +863,7 @@ function updateBackendBadge(live){
 
 /* ── RENDER RESULTS ── */
 function renderResults(R){
-  const{scored,profileKey,riskKey,profile,useHF,useMacro,useFF5,folds,lambda}=R;
+  const{scored,profileKey,riskKey,profile,useFF5,folds,lambda}=R;
   document.getElementById('welcomeScreen').style.display='none';
   document.getElementById('resultsScreen').style.display='block';
 
@@ -967,17 +901,7 @@ function renderResults(R){
     </div>`;
   } else bb.innerHTML='';
 
-  /* HF panel */
-  const hfp=document.getElementById('hfPanelSlot');
-  if(useHF){
-    const uniqSectors=[...new Set(scored.map(s=>s.s))].filter(s=>HF_DATA[s]);
-    const cards=uniqSectors.slice(0,8).map(s=>{
-      const d=HF_DATA[s];
-      const tc=d.trend==='Accumulating'?'trend-acc':d.trend==='Trimming'||d.trend==='Underweight'?'trend-trim':'trend-neu';
-      return`<div class="hf-card"><div class="hf-sname">${s}</div><span class="hf-trend ${tc}">${d.trend}</span><div class="hf-text">${d.conviction} conviction${d.funds.length?' · '+d.funds.slice(0,2).join(', '):''}<br>${d.note}</div></div>`;
-    }).join('');
-    hfp.innerHTML=`<div class="hf-panel"><div class="hf-title">Hedge Fund 13F Baseline Positioning</div><div class="hf-grid">${cards}</div></div>`;
-  } else hfp.innerHTML='';
+  document.getElementById('hfPanelSlot').innerHTML='';
 
   /* quant panel */
   const qp=document.getElementById('quantPanelSlot');
@@ -995,10 +919,6 @@ function renderResults(R){
         <div class="qt-metric"><div class="qt-lbl">CMA Invest.</div><div class="qt-val" style="color:${cma>0?'var(--green)':'var(--red)'}">${cma>0?'+':''}${cma}%</div></div>
         <div class="qt-metric"><div class="qt-lbl">Momentum</div><div class="qt-val" style="color:${mom>0?'var(--green)':'var(--red)'}">${mom>0?'+':''}${mom}%</div></div>
         <div class="qt-metric"><div class="qt-lbl">Alpha Est.</div><div class="qt-val" style="color:${al>0?'var(--green)':'var(--red)'}">${al>0?'+':''}${al}%</div></div>
-        <div class="qt-metric"><div class="qt-lbl">Fed Rate</div><div class="qt-val">${MACRO.fedRate}%</div></div>
-        <div class="qt-metric"><div class="qt-lbl">VIX</div><div class="qt-val">${MACRO.vix}</div></div>
-        <div class="qt-metric"><div class="qt-lbl">GBP/USD</div><div class="qt-val">${MACRO.gbpUsd}</div></div>
-        <div class="qt-metric"><div class="qt-lbl">EUR/USD</div><div class="qt-val">${MACRO.eurUsd}</div></div>
       </div></div>`;
   } else qp.innerHTML='';
 
@@ -1010,7 +930,7 @@ function renderResults(R){
     dividend:`Income screening prioritises sustainable yield with quality protection. ${top3} lead — combining attractive dividend yields with strong balance sheets and cash flow cover. The model filters out yield traps by requiring minimum ROE and margin thresholds.`,
     momentum:`Momentum filters identify ${top3} as exhibiting the strongest risk-adjusted trend persistence across 3-month and 12-month windows. Cross-validation confirms these signals are not artefacts of overfitting.`,
     quality:`QARP discipline surfaces ${top3} — exceptional capital efficiency at prices a rational long-term investor can defend. The model blends ROE, net margin, and leverage discipline with a valuation anchor.`,
-    macro:`The global macro screen identifies ${top3} as best positioned given the current rate, FX, and growth regime. Rate-sensitive sectors are penalised under the current ${MACRO.fedRate}% Fed funds environment.`,
+    macro:`The global macro screen identifies ${top3} as best positioned given the current rate, FX, and growth regime. Rate-sensitive sectors are penalised under the model's risk-adjusted scoring.`,
     activist:`Deep value screening surfaces ${top3} as candidates trading at steep discounts with identifiable catalysts for re-rating — low P/B, depressed multiples, and potential for operational improvement.`,
   };
   document.getElementById('insightBox').innerHTML=`
@@ -1019,13 +939,12 @@ function renderResults(R){
 
   /* table */
   document.getElementById('recTable').innerHTML=`
-    <div class="rec-head"><span>Ticker</span><span>Company</span><span>Score</span><span>P/E</span><span>ROE</span><span>Beta</span><span>HF</span><span>Signal</span></div>
+    <div class="rec-head"><span>Ticker</span><span>Company</span><span>Score</span><span>P/E</span><span>ROE</span><span>Beta</span><span>Inst %</span><span>Signal</span></div>
     ${scored.map(s=>{
       const mc=s.m==='US'?'mkt-us':s.m==='UK'?'mkt-uk':'mkt-ie';
-      const hfd=HF_DATA[s.s];
-      const hfColor=hfd?(hfd.trend==='Accumulating'?'var(--green)':hfd.trend==='Trimming'||hfd.trend==='Underweight'?'var(--red)':'var(--amber)'):'var(--ink3)';
-      const hfLbl=hfd?(hfd.trend==='Accumulating'?'▲':hfd.trend==='Trimming'||hfd.trend==='Underweight'?'▼':'—'):'—';
       const buyRow=isBuy(s.signal)?'is-buy':'';
+      const instStr=s.instPct!=null?s.instPct+'%':'—';
+      const instColor=s.instPct!=null?(s.instPct>70?'var(--green)':s.instPct>40?'var(--ink2)':'var(--ink3)'):'var(--ink3)';
       return`<div class="rec-row ${buyRow}" data-ticker="${s.t}">
         <span class="rt-ticker">${s.t} <span class="sr-mkt ${mc}" style="font-size:8px;padding:1px 3px">${s.m}</span>${s.isLive?'<span style="font-size:8px;color:var(--teal);margin-left:3px" title="Live data">●</span>':''}</span>
         <span class="rt-name">${s.n}${isBuy(s.signal)?'<span class="buy-tag">BUY</span>':''}</span>
@@ -1033,7 +952,7 @@ function renderResults(R){
         <span class="rt-num">${s.pe>90?'N/A':s.pe+'x'}</span>
         <span class="rt-num">${(s.roe*100).toFixed(0)}%</span>
         <span class="rt-num">${s.beta.toFixed(1)}</span>
-        <span style="font-family:'DM Mono',monospace;font-size:11px;color:${hfColor}">${hfLbl}</span>
+        <span class="rt-num" style="color:${instColor}">${instStr}</span>
         <span><span class="sig-pill ${pillCls(s.signal)}">${s.signal}</span></span>
       </div>`;
     }).join('')}`;
@@ -1112,7 +1031,6 @@ function openDetail(ticker){
   const signal=r?r.signal:'—';
   const mc=s.m==='US'?'mkt-us':s.m==='UK'?'mkt-uk':'mkt-ie';
   const buy=isBuy(signal);
-  const hfd=HF_DATA[s.s];
   const livePrice=r&&r.p?r.p:s.p;
   const priceStr=(s.m==='UK'?'£':'')+(s.m==='US'?'$':'')+(s.m==='IE'?'€':'')+livePrice.toLocaleString();
 
@@ -1120,10 +1038,10 @@ function openDetail(ticker){
   const vClass=buy?'v-buy':signal==='HOLD'?'v-hold':'v-sell';
   const vLabel=buy?`BUY ${s.t}`:signal==='HOLD'?`HOLD ${s.t}`:`AVOID ${s.t}`;
   const vDesc=buy
-    ?`The NUMKT model recommends buying ${s.t}. The composite ML score of ${score}% places this stock in the ${signal} tier based on fundamental analysis, quant factor decomposition, and hedge fund positioning.`
+    ?`The NUMKT model recommends buying ${s.t}. The composite ML score of ${score}% places this stock in the ${signal} tier based on fundamental analysis and quant factor decomposition.`
     :signal==='HOLD'
     ?`The model suggests holding ${s.t}. The stock shows mixed signals — some factors support it, others don't. Not a clear buy at current levels.`
-    :`The model signals caution on ${s.t}. The composite score of ${score}% reflects weak fundamentals, negative momentum, or adverse macro/HF signals.`;
+    :`The model signals caution on ${s.t}. The composite score of ${score}% reflects weak fundamentals or negative momentum.`;
   const reasons=r?r.buyReasons:[];
 
   const rats=buildDetailRationale(s);
@@ -1148,7 +1066,6 @@ function openDetail(ticker){
     <div class="score-row">
       <div class="sc-box"><div class="sc-lbl">FUNDAMENTAL</div><div class="sc-v">${r?(r.fundScore*100).toFixed(0):'-'}</div></div>
       <div class="sc-box"><div class="sc-lbl">QUANT FF5</div><div class="sc-v" style="color:${r&&r.ff.alphaEst>0?'var(--green)':'var(--red)'}">${r?r.quantScore:'—'}</div></div>
-      <div class="sc-box"><div class="sc-lbl">MACRO ADJ</div><div class="sc-v" style="color:${r&&r.macroAdj>0?'var(--green)':r&&r.macroAdj<0?'var(--red)':'var(--ink3)'}">${r?(r.macroAdj>0?'+':'')+(r.macroAdj*100).toFixed(1)+'%':'—'}</div></div>
       <div class="sc-box"><div class="sc-lbl">COMPOSITE</div><div class="sc-v">${score}%</div></div>
     </div>
 
@@ -1172,22 +1089,6 @@ function openDetail(ticker){
       </div>
     </div>`:''}
 
-    ${hfd?`<div class="dp-section">
-      <div class="dp-stitle">Hedge Fund 13F Positioning</div>
-      <div class="hf-box">
-        <div class="hf-box-title">${s.s} — ${hfd.conviction} conviction · ${hfd.trend}</div>
-        <div class="hf-box-text">${hfd.funds.length?'Key funds: '+hfd.funds.join(', ')+'<br>':''} ${hfd.note}</div>
-      </div>
-    </div>`:''}
-
-    <div class="dp-section">
-      <div class="dp-stitle">Macro Environment Impact</div>
-      <div class="macro-box">
-        <div class="macro-box-title">Current Conditions</div>
-        <div class="macro-box-text">${buildMacroNote(s)}</div>
-      </div>
-    </div>
-
     <div class="dp-section">
       <div class="dp-stitle">Key Fundamentals</div>
       <table class="dp-table">
@@ -1203,6 +1104,8 @@ function openDetail(ticker){
         <tr><td>Beta</td><td>${s.beta.toFixed(2)}</td></tr>
         <tr><td>12M Price Return</td><td style="color:${s.m12>0?'var(--green)':'var(--red)'}">${s.m12>0?'+':''}${(s.m12*100).toFixed(0)}%</td></tr>
         <tr><td>3M Price Return</td><td style="color:${s.m3>0?'var(--green)':'var(--red)'}">${s.m3>0?'+':''}${(s.m3*100).toFixed(0)}%</td></tr>
+        <tr><td>Institutional Ownership</td><td style="color:${r&&r.instPct!=null?(r.instPct>70?'var(--green)':r.instPct<30?'var(--red)':'var(--ink2)'):'var(--ink3)'}">${r&&r.instPct!=null?r.instPct+'%':'—'}</td></tr>
+        <tr><td>Insider Ownership</td><td style="color:${r&&r.insiderPct!=null&&r.insiderPct>10?'var(--green)':'var(--ink2)'}">${r&&r.insiderPct!=null?r.insiderPct+'%':'—'}</td></tr>
         <tr><td>Sector</td><td>${s.s}</td></tr>
         <tr><td>Market</td><td>${s.m}</td></tr>
       </table>
@@ -1234,18 +1137,6 @@ function buildDetailRationale(s){
   return r.slice(0,6);
 }
 
-function buildMacroNote(s){
-  const notes=[];
-  if(s.s==='Financials') notes.push(`Fed funds at ${MACRO.fedRate}% is ${MACRO.fedRate>4?'a tailwind for net interest margins in banking':'beginning to compress NIM for banks'}.`);
-  if(s.s==='Technology')  notes.push(`Elevated rates (${MACRO.fedRate}%) apply modest valuation pressure on long-duration growth stocks via higher discount rates.`);
-  if(s.s==='Utilities')   notes.push(`High rates (${MACRO.fedRate}%) compete with utility dividend yields and increase refinancing costs for capital-intensive businesses.`);
-  if(s.s==='Energy')      notes.push(`Inflation at ${MACRO.inflation}% supports commodity pricing. Energy sector typically benefits from inflationary environments.`);
-  if(s.m==='UK')          notes.push(`GBP/USD at ${MACRO.gbpUsd} — sterling ${MACRO.gbpUsd>1.26?'strength reduces translation gains for UK exporters':'weakness boosts FTSE exporters overseas earnings'}.`);
-  if(s.m==='IE')          notes.push(`EUR/USD at ${MACRO.eurUsd} — ECB policy and Eurozone growth (CPI normalising) relevant for Irish-listed multinationals.`);
-  if(MACRO.vix>20)        notes.push(`VIX at ${MACRO.vix} signals elevated market uncertainty — high-beta stocks face additional volatility risk.`);
-  notes.push(`10-year Treasury at ${MACRO.t10}% sets the risk-free hurdle rate for equity valuations globally.`);
-  return notes.slice(0,3).join(' ');
-}
 
 function buildPeriodExamples(examples){
   if(!examples||examples.length===0) return '';
