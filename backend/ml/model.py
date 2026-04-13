@@ -40,7 +40,7 @@ predict_proba(), save(), load(), list_saved() all behave identically.
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.model_selection import TimeSeriesSplit, cross_val_score
+from sklearn.model_selection import TimeSeriesSplit, cross_val_predict
 from sklearn.preprocessing import RobustScaler
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
@@ -189,11 +189,15 @@ class NUMKTEnsemble:
 
         self._run_cv_and_fit(X, y)
 
-        if forward_returns is not None and len(forward_returns) == len(X):
-            proba = self.predict_proba(X)
-            ic, _ = spearmanr(proba, forward_returns)
+        # IC from OOF predictions — genuinely out-of-sample
+        if (forward_returns is not None
+                and len(forward_returns) == len(X)
+                and self._oof_proba is not None):
+            ic, _ = spearmanr(self._oof_proba, forward_returns)
             self.cv_ic = float(ic) if np.isfinite(ic) else 0.0
-            logger.info(f"Training IC (Spearman): {self.cv_ic:.4f}")
+            logger.info(f"OOF IC (Spearman): {self.cv_ic:.4f}")
+        else:
+            self.cv_ic = 0.0
 
         self.is_fitted        = True
         self.n_training_rows  = len(y)
@@ -299,8 +303,12 @@ class NUMKTEnsemble:
 
         self._run_cv_and_fit(X, y)
 
-        ic, _ = spearmanr(self.predict_proba(X), fwd_arr)
-        self.cv_ic = float(ic) if np.isfinite(ic) else 0.0
+        # IC from OOF predictions — genuinely out-of-sample
+        if self._oof_proba is not None and len(self._oof_proba) == len(fwd_arr):
+            ic, _ = spearmanr(self._oof_proba, fwd_arr)
+            self.cv_ic = float(ic) if np.isfinite(ic) else 0.0
+        else:
+            self.cv_ic = 0.0
 
         self.is_fitted        = True
         self.n_training_rows  = n
@@ -309,7 +317,7 @@ class NUMKTEnsemble:
 
         logger.info(
             f"Model fitted on {n} price-cache rows. "
-            f"CV accuracy: {self.cv_accuracy:.3f}  IC: {self.cv_ic:.4f}"
+            f"OOF CV accuracy: {self.cv_accuracy:.3f}  OOF IC: {self.cv_ic:.4f}"
         )
         return self
 
@@ -525,24 +533,30 @@ class NUMKTEnsemble:
 
 
     def _run_cv_and_fit(self, X: np.ndarray, y: np.ndarray):
-        """Run TimeSeriesSplit CV then full fit on both pipelines."""
+        """Run TimeSeriesSplit CV then full fit on both pipelines.
+
+        Uses cross_val_predict to obtain out-of-fold (OOF) probability
+        predictions. OOF predictions are made by models that never saw the
+        test fold during training, so both cv_accuracy and cv_ic are genuine
+        out-of-sample estimates — not inflated in-sample figures.
+        """
         n_splits = min(self.cv_folds, max(2, len(y) // 4))
         tscv     = TimeSeriesSplit(n_splits=n_splits)
 
+        self._oof_proba: np.ndarray | None = None
         try:
-            cv_rf = cross_val_score(self._rf_pipe, X, y, cv=tscv,
-                                    scoring="accuracy", n_jobs=-1)
-            cv_gb = cross_val_score(self._gb_pipe, X, y, cv=tscv,
-                                    scoring="accuracy", n_jobs=-1)
-            self.cv_accuracy = float(
-                self.rf_weight * np.mean(cv_rf) +
-                self.gb_weight * np.mean(cv_gb)
-            )
-            logger.info(
-                f"CV accuracy — RF: {np.mean(cv_rf):.3f}  "
-                f"GB: {np.mean(cv_gb):.3f}  "
-                f"Ensemble: {self.cv_accuracy:.3f}"
-            )
+            oof_rf = cross_val_predict(
+                self._rf_pipe, X, y, cv=tscv,
+                method="predict_proba", n_jobs=-1,
+            )[:, 1]
+            oof_gb = cross_val_predict(
+                self._gb_pipe, X, y, cv=tscv,
+                method="predict_proba", n_jobs=-1,
+            )[:, 1]
+            self._oof_proba = self.rf_weight * oof_rf + self.gb_weight * oof_gb
+            oof_class       = (self._oof_proba >= 0.5).astype(int)
+            self.cv_accuracy = float(np.mean(oof_class == y))
+            logger.info(f"OOF CV accuracy (ensemble): {self.cv_accuracy:.3f}")
         except Exception as e:
             logger.warning(f"CV failed: {e}")
             self.cv_accuracy = 0.0

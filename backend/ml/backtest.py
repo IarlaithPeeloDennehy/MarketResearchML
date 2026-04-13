@@ -308,36 +308,17 @@ def run_backtest(
         )
         model.save(model_name)
 
-        # Compute in-sample IC: how well do model predictions correlate with
-        # the actual returns it was trained on. Distinct from the factor IC
-        # above (which measures the hand-coded score, not the ML model).
-        model_insample_ic = 0.0
-        if model.is_fitted and all_forward_returns:
-            try:
-                X_all = pd.DataFrame(all_feature_rows).fillna(0.5)
-                feat_cols = model._feature_names
-                for c in feat_cols:
-                    if c not in X_all.columns:
-                        X_all[c] = 0.5
-                preds = model.predict_proba(X_all[feat_cols].values)
-                ic_val, _ = spearmanr(preds, all_forward_returns)
-                model_insample_ic = float(ic_val) if np.isfinite(ic_val) else 0.0
-            except Exception as e:
-                logger.warning(f"Could not compute model in-sample IC: {e}")
-
         training_info = {
-            "trained":            True,
-            "training_rows":      len(all_feature_rows),
-            "training_source":    "real_returns",
-            "cv_accuracy":        round(model.cv_accuracy, 4),
-            "training_ic":        round(model.cv_ic, 4),
-            "model_insample_ic":  round(model_insample_ic, 4),
-            "model_name":         model_name,
+            "trained":         True,
+            "training_rows":   len(all_feature_rows),
+            "training_source": "real_returns",
+            "cv_accuracy":     round(model.cv_accuracy, 4),
+            "oof_ic":          round(model.cv_ic, 4),
+            "model_name":      model_name,
             "message": (
                 f"Model trained on {len(all_feature_rows)} real observations. "
-                f"CV accuracy: {model.cv_accuracy:.1%}. "
-                f"Training IC: {model.cv_ic:.4f}. "
-                f"Model in-sample IC: {model_insample_ic:.4f}. "
+                f"OOF CV accuracy: {model.cv_accuracy:.1%}. "
+                f"OOF IC: {model.cv_ic:.4f}. "
                 f"Next analysis will use this model."
             )
         }
