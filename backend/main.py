@@ -44,6 +44,7 @@ from auth.router import router as auth_router
 from auth.models import UserSession
 from user.router import router as user_router
 from db.session import get_db
+from db.base import create_db_and_tables
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -120,6 +121,13 @@ _data_cache:  dict = {}   # "latest" -> raw_data, features_df
 # ── Load any previously trained models on startup ─────────────────────────
 @app.on_event("startup")
 async def startup():
+    # ── Create tables (fallback if alembic didn't run) ────────────────────
+    try:
+        create_db_and_tables()
+        logger.info("Database tables verified/created")
+    except Exception as exc:
+        logger.warning(f"Table creation skipped: {exc}")
+
     # ── Prune stale sessions ───────────────────────────────────────────────
     try:
         for db in get_db():
