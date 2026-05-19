@@ -1021,6 +1021,44 @@ option{background:var(--bg);color:var(--text1)}
 .acct-pwd-msg{font-size:11px;text-align:center;min-height:16px}
 .acct-pwd-msg.ok{color:var(--primary)}
 .acct-pwd-msg.err{color:#f87171}
+.acct-danger-zone{
+  margin-top:12px;border-top:1px solid var(--border);padding-top:12px;
+}
+.acct-danger-label{
+  font-family:'JetBrains Mono',monospace;font-size:8px;letter-spacing:0.1em;
+  text-transform:uppercase;color:#f87171;margin-bottom:8px;
+}
+.acct-delete-toggle{
+  width:100%;padding:7px;
+  background:none;border:1px solid rgba(248,113,113,0.25);border-radius:var(--r2);
+  font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:0.07em;
+  color:#f87171;cursor:pointer;transition:all 0.2s;
+}
+.acct-delete-toggle:hover{background:rgba(248,113,113,0.08);border-color:rgba(248,113,113,0.5)}
+.acct-delete-form{display:none;flex-direction:column;gap:8px;margin-top:8px}
+.acct-delete-form.open{display:flex}
+.acct-delete-warning{
+  font-size:11px;color:var(--text2);line-height:1.5;
+  background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.2);
+  border-radius:var(--r2);padding:8px 10px;
+}
+.acct-delete-form input{
+  background:var(--surface2);border:1px solid rgba(248,113,113,0.3);
+  border-radius:var(--r2);padding:8px 10px;
+  color:var(--text1);font-family:'Inter',sans-serif;font-size:12px;
+  outline:none;transition:border-color 0.2s;
+}
+.acct-delete-form input:focus{border-color:#f87171}
+.acct-delete-form input::placeholder{color:var(--text3)}
+.acct-delete-submit{
+  padding:8px;border:1px solid #f87171;border-radius:var(--r2);
+  background:rgba(248,113,113,0.1);color:#f87171;
+  font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.07em;font-weight:600;
+  cursor:pointer;transition:all 0.2s;
+}
+.acct-delete-submit:hover{background:rgba(248,113,113,0.2)}
+.acct-delete-submit:disabled{opacity:0.4;cursor:not-allowed}
+.acct-delete-msg{font-size:11px;text-align:center;min-height:16px;color:#f87171}
 </style>
 </head>
 <body>
@@ -2020,6 +2058,18 @@ const Auth = (() => {
         document.getElementById('acctPwdMsg').textContent = '';
       }
 
+      // Collapse delete form on every open
+      const delForm = document.getElementById('acctDeleteForm');
+      if (delForm) {
+        delForm.classList.remove('open');
+        const tog = document.getElementById('acctDeleteToggle');
+        tog.textContent  = 'DELETE ACCOUNT';
+        tog.style.borderColor = '';
+        tog.style.color       = '';
+        document.getElementById('acctDeletePwd').value       = '';
+        document.getElementById('acctDeleteMsg').textContent = '';
+      }
+
       const daysSince = Math.floor((Date.now() - new Date(_user.created_at)) / 86400000);
       document.getElementById('acctDaysSince').textContent = daysSince;
     }
@@ -2245,7 +2295,50 @@ const Auth = (() => {
     }
   }
 
-  return { init, openModal, closeModal, handleOverlayClick, showTab, login, signup, logout, saveDisplayName, togglePwdForm, changePassword };
+  function toggleDeleteForm() {
+    const form   = document.getElementById('acctDeleteForm');
+    const toggle = document.getElementById('acctDeleteToggle');
+    const open   = form.classList.toggle('open');
+    toggle.textContent = open ? 'CANCEL' : 'DELETE ACCOUNT';
+    toggle.style.borderColor = open ? 'var(--border2)' : '';
+    toggle.style.color       = open ? 'var(--text3)'   : '';
+    if (open) {
+      document.getElementById('acctDeletePwd').focus();
+    } else {
+      document.getElementById('acctDeletePwd').value      = '';
+      document.getElementById('acctDeleteMsg').textContent = '';
+    }
+  }
+
+  async function deleteAccount() {
+    const pwd   = document.getElementById('acctDeletePwd').value;
+    const msgEl = document.getElementById('acctDeleteMsg');
+    const btn   = document.getElementById('acctDeleteSubmit');
+
+    if (!pwd) { msgEl.textContent = 'Enter your password to confirm.'; return; }
+
+    btn.disabled     = true;
+    msgEl.textContent = 'Deleting…';
+
+    const r = await fetch('/auth/me', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ password: pwd }),
+    });
+    const data = await r.json().catch(() => ({}));
+
+    if (r.ok) {
+      // Wipe local state, close modal, reset UI
+      _setUser(null);
+      closeModal();
+    } else {
+      btn.disabled      = false;
+      msgEl.textContent = data.detail || 'Deletion failed. Check your password.';
+    }
+  }
+
+  return { init, openModal, closeModal, handleOverlayClick, showTab, login, signup, logout, saveDisplayName, togglePwdForm, changePassword, toggleDeleteForm, deleteAccount };
 })();
 
 Auth.init();
@@ -2627,6 +2720,18 @@ const Saves = (() => {
       </div>
 
       <button class="auth-logout-btn" onclick="Auth.logout()">LOG OUT</button>
+
+      <!-- Danger zone — account deletion -->
+      <div class="acct-danger-zone">
+        <div class="acct-danger-label">Danger Zone</div>
+        <button class="acct-delete-toggle" id="acctDeleteToggle" onclick="Auth.toggleDeleteForm()">DELETE ACCOUNT</button>
+        <div class="acct-delete-form" id="acctDeleteForm">
+          <div class="acct-delete-warning">This is permanent. All saved analyses, preferences, and activity history will be erased and cannot be recovered.</div>
+          <input id="acctDeletePwd" type="password" autocomplete="current-password" placeholder="Confirm your password">
+          <button class="acct-delete-submit" id="acctDeleteSubmit" onclick="Auth.deleteAccount()">PERMANENTLY DELETE MY ACCOUNT</button>
+          <div class="acct-delete-msg" id="acctDeleteMsg"></div>
+        </div>
+      </div>
     </div>
   </div>
 </div>

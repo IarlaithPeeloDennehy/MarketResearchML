@@ -86,7 +86,12 @@ class SignupRequest(BaseModel):
     @field_validator("email")
     @classmethod
     def email_lower(cls, v: str) -> str:
-        return v.strip().lower()
+        v = v.strip().lower()
+        if "@" not in v or "." not in v.split("@")[-1]:
+            raise ValueError("Please enter a valid email address.")
+        if len(v) > 254:
+            raise ValueError("Email address is too long.")
+        return v
 
     @field_validator("password")
     @classmethod
@@ -331,3 +336,40 @@ def change_password(
     db.commit()
 
     return {"status": "ok", "message": "Password changed. Other sessions have been signed out."}
+
+
+# ── DELETE /auth/me ────────────────────────────────────────────────────────
+
+class DeleteAccountRequest(BaseModel):
+    password: str   # must confirm identity before destructive action
+
+
+@router.delete("/me", status_code=200)
+@limiter.limit("3/minute")
+def delete_account(
+    body: DeleteAccountRequest,
+    request: Request,
+    response: Response,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Permanently delete the authenticated user's account.
+
+    Requires password confirmation so a stolen session cookie alone cannot
+    trigger deletion. All related rows (sessions, preferences, saved analyses,
+    activity events) are removed by ON DELETE CASCADE in the migration.
+    """
+    if not verify_password(body.password, current_user.password_hash):
+        raise HTTPException(400, "Incorrect password.")
+
+    # Log before deletion so the event is captured (will cascade-delete anyway,
+    # but gives a final audit entry if we ever restore from backup).
+    _log_event(db, current_user.id, "account_deleted", request)
+    db.flush()   # write the event before the user row is gone
+
+    db.delete(current_user)
+    db.commit()
+
+    response.delete_cookie(_COOKIE_NAME, path="/")
+    return {"status": "ok", "message": "Account permanently deleted."}
