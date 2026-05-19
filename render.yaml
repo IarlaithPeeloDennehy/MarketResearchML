@@ -1,0 +1,39 @@
+# Render Infrastructure-as-Code
+# Deploy this repo on Render: https://render.com/docs/infrastructure-as-code
+#
+# What this creates:
+#   - A Python web service running the FastAPI backend (serves the frontend too)
+#   - A free-tier PostgreSQL database linked to the service
+#
+# First-time setup:
+#   1. Push this file to GitHub
+#   2. Go to Render Dashboard → New → Blueprint → select this repo
+#   3. Render reads this file and creates everything automatically
+#   4. The DATABASE_URL is injected automatically from the linked database
+#   5. Run `alembic upgrade head` is handled by the Procfile on every deploy
+
+services:
+  - type: web
+    name: numrkt-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: sh -c '[ -n "$DATABASE_URL" ] && alembic upgrade head; exec uvicorn main:app --host 0.0.0.0 --port $PORT'
+    plan: free
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: numrkt-db
+          property: connectionString
+      - key: ALLOWED_ORIGINS
+        value: ""          # leave blank — same-origin serving means CORS is not needed
+      - key: CACHE_DIR
+        value: ""          # leave blank to use backend/cache/ (ephemeral on free tier)
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+
+databases:
+  - name: numrkt-db
+    plan: free
+    databaseName: numrkt
+    user: numrkt

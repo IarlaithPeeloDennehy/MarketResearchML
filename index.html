@@ -750,6 +750,22 @@ option{background:var(--bg);color:var(--text1)}
 @media(max-width:1023px){.mobile-run-btn{display:block}}
 @media(max-width:1023px){.main{padding-bottom:90px}}
 
+/* ═══════════════════ TOAST NOTIFICATION ═══════════════════ */
+.app-toast{
+  position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(12px);
+  z-index:1000;
+  padding:10px 18px;border-radius:var(--r-pill);
+  font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.04em;
+  white-space:nowrap;max-width:90vw;overflow:hidden;text-overflow:ellipsis;
+  opacity:0;transition:opacity 0.25s ease, transform 0.25s ease;
+  pointer-events:none;
+}
+.app-toast-visible{opacity:1;transform:translateX(-50%) translateY(0)}
+.app-toast-info{background:var(--surface2);border:1px solid var(--border2);color:var(--text1)}
+.app-toast-warn{background:rgba(251,191,36,0.12);border:1px solid rgba(251,191,36,0.3);color:#fbbf24}
+.app-toast-err{background:rgba(248,113,113,0.12);border:1px solid rgba(248,113,113,0.3);color:#f87171}
+.app-toast-ok{background:var(--primary-dim);border:1px solid var(--primary-glow);color:var(--primary)}
+
 /* ═══════════════════ SAVE DEFAULTS BUTTON ═══════════════════ */
 .save-defaults-btn{
   display:block;width:calc(100% - 32px);margin:0 16px 10px;
@@ -1962,6 +1978,60 @@ document.getElementById('dpClose').onclick=()=>document.getElementById('detailPa
 document.getElementById('runBtn').onclick=runAnalysis;
 initStockList();
 
+/* ═══════════════════ FETCH INTERCEPTOR ═══════════════════ */
+// Wraps window.fetch to handle two global error conditions without changing
+// any existing call sites:
+//
+//   401 — Session expired or revoked while the user was active.
+//          If we believed the user was logged in, silently reset auth state
+//          and re-open the login modal with an explanatory message.
+//
+//   429 — Rate limit hit. Show a brief toast so the user knows to slow down.
+//
+// The interceptor only reads response.status — never the body — so callers
+// can still read the body themselves without consuming a one-shot stream.
+(function _installFetchInterceptor() {
+  const _orig = window.fetch.bind(window);
+  window.fetch = async function(...args) {
+    const response = await _orig(...args);
+
+    if (response.status === 401) {
+      // Only act if Auth believes a user is currently logged in.
+      // A 401 on /auth/me during init() is expected when not logged in.
+      if (typeof Auth !== 'undefined' && Auth.isLoggedIn()) {
+        Auth.handleSessionExpiry();
+      }
+    }
+
+    if (response.status === 429) {
+      _showToast('Too many requests — please wait a moment before trying again.', 'warn');
+    }
+
+    return response;   // always return the original response unchanged
+  };
+})();
+
+// ── Toast helper (used by interceptor + any module that needs it) ──────────
+function _showToast(msg, type = 'info') {
+  const existing = document.getElementById('appToast');
+  if (existing) existing.remove();
+
+  const toast = document.createElement('div');
+  toast.id        = 'appToast';
+  toast.className = 'app-toast app-toast-' + type;
+  toast.textContent = msg;
+  document.body.appendChild(toast);
+
+  // Animate in
+  requestAnimationFrame(() => toast.classList.add('app-toast-visible'));
+
+  // Auto-dismiss after 4s
+  setTimeout(() => {
+    toast.classList.remove('app-toast-visible');
+    setTimeout(() => toast.remove(), 350);
+  }, 4000);
+}
+
 /* ═══════════════════ AUTH MODULE ═══════════════════ */
 const Auth = (() => {
   let _user = null;  // { id, email, display_name, created_at } or null
@@ -2338,7 +2408,22 @@ const Auth = (() => {
     }
   }
 
-  return { init, openModal, closeModal, handleOverlayClick, showTab, login, signup, logout, saveDisplayName, togglePwdForm, changePassword, toggleDeleteForm, deleteAccount };
+  function isLoggedIn() {
+    return _user !== null;
+  }
+
+  function handleSessionExpiry() {
+    _setUser(null);
+    // Reopen the modal on the login tab with a contextual message
+    _showAuthPanels();
+    openModal();
+    // Briefly surface an error in the login form so the user knows why
+    setTimeout(() => {
+      _setError('loginError', 'Your session expired — please log in again.');
+    }, 80);
+  }
+
+  return { init, openModal, closeModal, handleOverlayClick, showTab, login, signup, logout, saveDisplayName, togglePwdForm, changePassword, toggleDeleteForm, deleteAccount, isLoggedIn, handleSessionExpiry };
 })();
 
 Auth.init();
