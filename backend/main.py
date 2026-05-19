@@ -12,15 +12,25 @@ Changes from v1:
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from pathlib import Path
 from typing import List, Optional
 import numpy as np
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 import asyncio
 import warnings
 warnings.filterwarnings("ignore")
+
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+# Absolute path to index.html — works regardless of working directory.
+# main.py lives in backend/, so parent.parent is the project root.
+_FRONTEND_HTML = Path(__file__).parent.parent / "index.html"
 
 from ml.data_fetcher import (fetch_stock_data, fetch_multiple_stocks,
                               get_cache_status, clear_cache as clear_data_cache)
@@ -28,15 +38,24 @@ from ml.feature_engineering import build_features
 from ml.model import NUMKTEnsemble
 from ml.backtest import run_backtest
 from ml.scoring import score_universe
+from auth.router import router as auth_router
+from user.router import router as user_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# ── Rate limiter ───────────────────────────────────────────────────────────
+# Key function uses X-Forwarded-For when behind Render's proxy, else direct IP
+limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
     title="NUMKT ML Backend v2",
     description="Self-improving ML backend — trains on real historical returns",
     version="2.0.0"
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -45,6 +64,10 @@ app.add_middleware(
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["Content-Type"],
 )
+
+# ── Auth + user routes ────────────────────────────────────────────────────
+app.include_router(auth_router)
+app.include_router(user_router)
 
 # ── In-memory caches ───────────────────────────────────────────────────────
 _model_cache: dict = {}   # profile_risk_lookback -> NUMKTEnsemble
@@ -91,22 +114,42 @@ class BacktestRequest(BaseModel):
     train_model:      bool = True    # train on real returns after backtest
 
 
-# ── Health ─────────────────────────────────────────────────────────────────
+# ── Frontend ───────────────────────────────────────────────────────────────
 
-@app.get("/")
-def root():
-    saved = NUMKTEnsemble.list_saved()
-    return {
-        "service":      "NUMKT ML Backend v2",
-        "status":       "running",
-        "timestamp":    datetime.utcnow().isoformat(),
-        "saved_models": len(saved),
-        "best_model":   saved[0] if saved else None,
-    }
+@app.get("/", include_in_schema=False)
+def serve_frontend():
+    """
+    Serve the single-page frontend. Hosting the HTML here (same origin as the
+    API) is what makes HttpOnly session cookies work — they cannot be set or
+    sent across origins on file:// or a separate domain without CORS
+    credential sharing, which itself breaks SameSite cookie semantics.
+    """
+    if not _FRONTEND_HTML.exists():
+        raise HTTPException(
+            404,
+            "index.html not found. Expected it at: " + str(_FRONTEND_HTML)
+        )
+    return FileResponse(_FRONTEND_HTML, media_type="text/html")
+
+
+# ── Health ─────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/status")
+def api_status():
+    """Machine-readable service status — the old GET / payload, now at /api/status."""
+    saved = NUMKTEnsemble.list_saved()
+    return {
+        "service":      "NUMKT ML Backend v2",
+        "status":       "running",
+        "timestamp":    datetime.now(timezone.utc).isoformat(),
+        "saved_models": len(saved),
+        "best_model":   saved[0] if saved else None,
+    }
 
 
 # ── Main analysis ──────────────────────────────────────────────────────────
@@ -158,7 +201,7 @@ async def analyse(req: AnalyseRequest):
 
         return {
             "status":             "ok",
-            "timestamp":          datetime.utcnow().isoformat(),
+            "timestamp":          datetime.now(timezone.utc).isoformat(),
             "profile":            req.profile,
             "risk":               req.risk,
             "cv_folds":           req.cv_folds,
@@ -222,7 +265,7 @@ async def backtest(req: BacktestRequest):
 
         return {
             "status":           "ok",
-            "timestamp":        datetime.utcnow().isoformat(),
+            "timestamp":        datetime.now(timezone.utc).isoformat(),
             "tickers":          req.tickers,
             "backtest_period":  f"{req.lookback_years} years",
             "forward_months":   req.forward_months,

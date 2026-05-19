@@ -749,6 +749,179 @@ option{background:var(--bg);color:var(--text1)}
 }
 @media(max-width:1023px){.mobile-run-btn{display:block}}
 @media(max-width:1023px){.main{padding-bottom:90px}}
+
+/* ═══════════════════ SAVE BAR ═══════════════════ */
+.save-bar{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r3);padding:12px 16px;margin-bottom:1.5rem;
+}
+.save-bar-label{
+  font-family:'JetBrains Mono',monospace;font-size:9px;
+  color:var(--text3);letter-spacing:0.1em;text-transform:uppercase;
+  white-space:nowrap;
+}
+.save-bar input{
+  flex:1;min-width:140px;
+  background:var(--surface2);border:1px solid var(--border2);
+  border-radius:var(--r2);padding:7px 10px;
+  color:var(--text1);font-family:'Inter',sans-serif;font-size:12px;
+  outline:none;transition:border-color 0.2s;
+}
+.save-bar input:focus{border-color:var(--primary)}
+.save-bar input::placeholder{color:var(--text3)}
+.save-bar-btn{
+  font-family:'JetBrains Mono',monospace;font-size:10px;
+  padding:7px 14px;border-radius:var(--r2);
+  background:var(--primary-dim);color:var(--primary);
+  border:1px solid var(--primary-glow);
+  cursor:pointer;white-space:nowrap;transition:all 0.2s;letter-spacing:0.05em;
+}
+.save-bar-btn:hover{background:rgba(132,204,22,0.2)}
+.save-bar-btn:disabled{opacity:0.4;cursor:not-allowed}
+.save-bar-msg{font-size:11px;color:var(--text3)}
+.save-bar-msg.ok{color:var(--primary)}
+.save-bar-msg.err{color:#f87171}
+/* hidden when not logged in */
+.save-bar.auth-hidden{display:none}
+
+/* ═══════════════════ SAVED PANEL ═══════════════════ */
+.saved-panel{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r3);padding:24px;margin-bottom:1.5rem;
+}
+.saved-panel-header{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:16px;gap:10px;flex-wrap:wrap;
+}
+.saved-panel-title{
+  font-family:'JetBrains Mono',monospace;font-size:9px;
+  color:var(--text3);letter-spacing:0.1em;text-transform:uppercase;
+}
+.saved-panel-refresh{
+  font-family:'JetBrains Mono',monospace;font-size:9px;
+  padding:4px 10px;border-radius:var(--r-pill);
+  border:1px solid var(--border2);background:transparent;color:var(--text3);
+  cursor:pointer;letter-spacing:0.05em;transition:all 0.2s;
+}
+.saved-panel-refresh:hover{color:var(--text1);border-color:var(--border3)}
+.saved-list{display:flex;flex-direction:column;gap:8px}
+.saved-empty{font-size:12px;color:var(--text3);text-align:center;padding:24px 0}
+.saved-item{
+  display:flex;align-items:center;gap:10px;
+  background:var(--surface2);border:1px solid var(--border);
+  border-radius:var(--r2);padding:10px 14px;
+  transition:border-color 0.2s;cursor:pointer;
+}
+.saved-item:hover{border-color:var(--border3)}
+.saved-item-info{flex:1;min-width:0}
+.saved-item-name{font-size:13px;color:var(--text1);font-weight:500;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.saved-item-meta{
+  font-family:'JetBrains Mono',monospace;font-size:9px;
+  color:var(--text3);letter-spacing:0.04em;margin-top:2px;
+}
+.saved-item-load{
+  font-family:'JetBrains Mono',monospace;font-size:9px;
+  padding:4px 10px;border-radius:var(--r-pill);
+  border:1px solid var(--primary-glow);background:var(--primary-dim);color:var(--primary);
+  cursor:pointer;white-space:nowrap;transition:all 0.2s;letter-spacing:0.04em;flex-shrink:0;
+}
+.saved-item-load:hover{background:rgba(132,204,22,0.2)}
+.saved-item-del{
+  font-family:'JetBrains Mono',monospace;font-size:9px;
+  padding:4px 8px;border-radius:var(--r-pill);
+  border:1px solid var(--border2);background:transparent;color:var(--text3);
+  cursor:pointer;white-space:nowrap;transition:all 0.2s;flex-shrink:0;
+}
+.saved-item-del:hover{border-color:#f87171;color:#f87171}
+
+/* ═══════════════════ AUTH BUTTON (header) ═══════════════════ */
+.auth-btn{
+  font-family:'JetBrains Mono',monospace;font-size:10px;
+  padding:5px 12px;border-radius:var(--r-pill);
+  border:1px solid var(--border2);
+  background:transparent;color:var(--text2);
+  cursor:pointer;transition:all 0.2s;white-space:nowrap;letter-spacing:0.05em;
+}
+.auth-btn:hover{background:var(--surface2);border-color:var(--border3);color:var(--text1)}
+.auth-btn.auth-logged-in{
+  background:var(--primary-dim);color:var(--primary);
+  border-color:var(--primary-glow);
+}
+.auth-btn.auth-logged-in:hover{background:rgba(132,204,22,0.2)}
+
+/* ═══════════════════ AUTH MODAL ═══════════════════ */
+.auth-overlay{
+  display:none;position:fixed;inset:0;z-index:500;
+  background:rgba(10,11,20,0.8);backdrop-filter:blur(8px);
+  align-items:center;justify-content:center;
+}
+.auth-overlay.open{display:flex}
+.auth-modal{
+  background:var(--surface);border:1px solid var(--border2);
+  border-radius:var(--r3);padding:32px 28px;
+  width:min(380px,92vw);position:relative;
+  box-shadow:0 24px 80px rgba(0,0,0,0.6);
+  animation:fadeUp 0.25s cubic-bezier(0.16,1,0.3,1) both;
+}
+.auth-close{
+  position:absolute;top:14px;right:14px;
+  background:none;border:none;cursor:pointer;
+  color:var(--text3);font-size:18px;line-height:1;
+  padding:4px 8px;border-radius:var(--r);transition:color 0.2s;
+}
+.auth-close:hover{color:var(--text1)}
+.auth-tabs{display:flex;gap:0;margin-bottom:24px;border-bottom:1px solid var(--border)}
+.auth-tab{
+  flex:1;padding:8px 0;background:none;border:none;cursor:pointer;
+  font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.08em;
+  color:var(--text3);transition:color 0.2s;border-bottom:2px solid transparent;
+  margin-bottom:-1px;
+}
+.auth-tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+.auth-tab:hover:not(.active){color:var(--text2)}
+.auth-panel{display:none}
+.auth-panel.active{display:block}
+.auth-field{margin-bottom:14px}
+.auth-field label{
+  display:block;font-family:'JetBrains Mono',monospace;
+  font-size:9px;letter-spacing:0.1em;text-transform:uppercase;
+  color:var(--text3);margin-bottom:5px;
+}
+.auth-field input{
+  width:100%;box-sizing:border-box;
+  background:var(--surface2);border:1px solid var(--border2);
+  border-radius:var(--r2);padding:10px 12px;
+  color:var(--text1);font-family:'Inter',sans-serif;font-size:13px;
+  outline:none;transition:border-color 0.2s;
+}
+.auth-field input:focus{border-color:var(--primary)}
+.auth-remember{display:flex;align-items:center;gap:8px;margin-bottom:16px;cursor:pointer}
+.auth-remember input[type=checkbox]{accent-color:var(--primary);width:14px;height:14px}
+.auth-remember span{font-size:12px;color:var(--text2)}
+.auth-submit{
+  width:100%;padding:11px;border:none;border-radius:var(--r2);
+  background:var(--primary);color:#0a0b14;
+  font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.08em;font-weight:600;
+  cursor:pointer;transition:opacity 0.2s;
+}
+.auth-submit:hover{opacity:0.9}
+.auth-submit:disabled{opacity:0.5;cursor:not-allowed}
+.auth-error{
+  font-size:12px;color:#f87171;margin-top:10px;
+  min-height:18px;text-align:center;
+}
+.auth-user-info{text-align:center;padding:8px 0 16px}
+.auth-user-email{font-size:13px;color:var(--text1);margin-bottom:4px}
+.auth-user-since{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--text3);letter-spacing:0.06em}
+.auth-logout-btn{
+  width:100%;padding:9px;border:1px solid var(--border2);border-radius:var(--r2);
+  background:transparent;color:var(--text2);
+  font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.07em;
+  cursor:pointer;transition:all 0.2s;margin-top:4px;
+}
+.auth-logout-btn:hover{background:var(--surface2);color:var(--text1)}
 </style>
 </head>
 <body>
@@ -761,6 +934,7 @@ option{background:var(--bg);color:var(--text1)}
   <div class="header-right">
     <span class="header-meta">US · UK · IE · RF+GB Ensemble · FF5 · HF Signals</span>
     <div class="hbadge hb-gold">v3.1</div>
+    <button class="auth-btn" id="authBtn" onclick="Auth.openModal()">LOG IN</button>
     <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">
       <span></span><span></span><span></span>
     </button>
@@ -850,7 +1024,25 @@ option{background:var(--bg);color:var(--text1)}
     </div>
   </div>
 
+  <!-- Saved analyses panel — hidden until user is logged in -->
+  <div class="saved-panel auth-hidden" id="savedPanel">
+    <div class="saved-panel-header">
+      <span class="saved-panel-title">Saved Analyses</span>
+      <button class="saved-panel-refresh" onclick="Saves.loadList()">REFRESH</button>
+    </div>
+    <div class="saved-list" id="savedList">
+      <div class="saved-empty">Log in to see your saved analyses.</div>
+    </div>
+  </div>
+
   <div id="resultsScreen" style="display:none">
+    <!-- Save-this-analysis bar — hidden until user is logged in -->
+    <div class="save-bar auth-hidden" id="saveBar">
+      <span class="save-bar-label">Save</span>
+      <input id="saveNameInput" type="text" maxlength="200" placeholder="Name this analysis…">
+      <button class="save-bar-btn" id="saveBtn" onclick="Saves.saveCurrentAnalysis()">SAVE ↗</button>
+      <span class="save-bar-msg" id="saveMsg"></span>
+    </div>
     <div class="summary-grid" id="summaryGrid"></div>
     <div id="buyBannerSlot"></div>
     <div id="hfPanelSlot"></div>
@@ -904,14 +1096,17 @@ option{background:var(--bg);color:var(--text1)}
 /* ================================================================
    BACKEND CONFIG
 ================================================================ */
-const BACKEND_URL = 'https://numkt.onrender.com';
+// Empty string = same-origin relative paths (/analyse, /backtest, etc.)
+// The frontend is now served by FastAPI, so all fetch() calls are same-origin.
+// For local dev: run the backend and open http://localhost:8000 — not file://
+const BACKEND_URL = '';
 
 async function callBackend(endpoint, payload) {
-  if (!BACKEND_URL) return null;
   try {
     const r = await fetch(BACKEND_URL + endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify(payload),
     });
     if (!r.ok) { console.warn('Backend HTTP ' + r.status); return null; }
@@ -923,8 +1118,7 @@ async function callBackend(endpoint, payload) {
 }
 
 async function checkBackend() {
-  if (!BACKEND_URL) return false;
-  try { const r = await fetch(BACKEND_URL + '/health'); return r.ok; }
+  try { const r = await fetch(BACKEND_URL + '/health', { credentials: 'include' }); return r.ok; }
   catch { return false; }
 }
 
@@ -1296,6 +1490,13 @@ function renderResults(R){
   document.getElementById('welcomeScreen').style.display='none';
   document.getElementById('resultsScreen').style.display='block';
 
+  // Pre-fill save name with a sensible default
+  const nameInput = document.getElementById('saveNameInput');
+  if (nameInput && !nameInput.value) {
+    const top3 = scored.slice(0, 3).map(s => s.t).join(', ');
+    nameInput.value = `${profile.l} — ${top3}`;
+  }
+
   const buys=scored.filter(s=>isBuy(s.signal));
   const holds=scored.filter(s=>s.signal==='HOLD');
   const sells=scored.filter(s=>s.signal==='SELL');
@@ -1587,7 +1788,7 @@ function buildPeriodExamples(examples){
 }
 
 async function runBacktest(){
-  if(!BACKEND_URL){document.getElementById('btResults').innerHTML='<div class="bt-offline">Backtest requires the Python backend to be running. Deploy the backend and set BACKEND_URL to enable this feature.</div>';return;}
+  if(!await checkBackend()){document.getElementById('btResults').innerHTML='<div class="bt-offline">Backtest requires the Python backend to be running. Open this page via the backend server, not as a local file.</div>';return;}
   if(!runResults||!runResults.scored){alert('Please run an analysis first.');return;}
   const btn=document.getElementById('btBtn');
   btn.disabled=true;btn.textContent='RUNNING...';
@@ -1618,6 +1819,424 @@ async function runBacktest(){
 document.getElementById('dpClose').onclick=()=>document.getElementById('detailPanel').classList.remove('open');
 document.getElementById('runBtn').onclick=runAnalysis;
 initStockList();
+
+/* ═══════════════════ AUTH MODULE ═══════════════════ */
+const Auth = (() => {
+  let _user = null;  // { id, email, display_name, created_at } or null
+
+  // ── private helpers ────────────────────────────────────────────────────
+
+  async function _apiPost(path, body) {
+    const r = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(body),
+    });
+    const data = await r.json().catch(() => ({}));
+    return { ok: r.ok, status: r.status, data };
+  }
+
+  async function _apiGet(path) {
+    const r = await fetch(path, { credentials: 'include' });
+    const data = await r.json().catch(() => ({}));
+    return { ok: r.ok, status: r.status, data };
+  }
+
+  function _setUser(user) {
+    const wasNull = _user === null;
+    _user = user;
+    _updateHeaderBtn();
+    // Notify Saves module (may not exist yet on first parse, so guard)
+    if (typeof Saves !== 'undefined') {
+      if (user) Saves.onLogin();
+      else Saves.onLogout();
+    }
+  }
+
+  function _updateHeaderBtn() {
+    const btn = document.getElementById('authBtn');
+    if (!btn) return;
+    if (_user) {
+      const name = _user.display_name || _user.email.split('@')[0];
+      btn.textContent = name.toUpperCase();
+      btn.classList.add('auth-logged-in');
+    } else {
+      btn.textContent = 'LOG IN';
+      btn.classList.remove('auth-logged-in');
+    }
+  }
+
+  function _setError(id, msg) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = msg || '';
+  }
+
+  function _setLoading(btnId, loading) {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    btn.disabled = loading;
+    btn.textContent = loading
+      ? (btnId === 'loginSubmit' ? 'LOGGING IN…' : 'CREATING…')
+      : (btnId === 'loginSubmit' ? 'LOG IN' : 'CREATE ACCOUNT');
+  }
+
+  // ── tab / modal control ────────────────────────────────────────────────
+
+  function showTab(tab) {
+    ['login','signup'].forEach(t => {
+      document.getElementById('tab'   + t[0].toUpperCase() + t.slice(1)).classList.toggle('active', t === tab);
+      document.getElementById('panel' + t[0].toUpperCase() + t.slice(1)).classList.toggle('active', t === tab);
+    });
+    _setError('loginError', '');
+    _setError('signupError', '');
+  }
+
+  function _showAccountPanel() {
+    document.getElementById('authTabs').style.display = 'none';
+    ['Login','Signup'].forEach(p => document.getElementById('panel'+p).classList.remove('active'));
+    document.getElementById('panelAccount').classList.add('active');
+    if (_user) {
+      document.getElementById('accountEmail').textContent = _user.email;
+      const since = new Date(_user.created_at).toLocaleDateString('en-GB', { year:'numeric', month:'short' });
+      document.getElementById('accountSince').textContent = 'MEMBER SINCE ' + since.toUpperCase();
+    }
+  }
+
+  function _showAuthPanels() {
+    document.getElementById('authTabs').style.display = '';
+    document.getElementById('panelAccount').classList.remove('active');
+    showTab('login');
+  }
+
+  function openModal() {
+    const overlay = document.getElementById('authOverlay');
+    overlay.classList.add('open');
+    document.body.style.overflow = 'hidden';
+    if (_user) {
+      _showAccountPanel();
+    } else {
+      _showAuthPanels();
+      setTimeout(() => document.getElementById('loginEmail').focus(), 80);
+    }
+  }
+
+  function closeModal() {
+    document.getElementById('authOverlay').classList.remove('open');
+    document.body.style.overflow = '';
+  }
+
+  function handleOverlayClick(e) {
+    if (e.target === document.getElementById('authOverlay')) closeModal();
+  }
+
+  // ── API calls ──────────────────────────────────────────────────────────
+
+  async function login() {
+    _setError('loginError', '');
+    const email    = document.getElementById('loginEmail').value.trim();
+    const password = document.getElementById('loginPassword').value;
+    const remember = document.getElementById('loginRemember').checked;
+    if (!email || !password) { _setError('loginError', 'Please fill in all fields.'); return; }
+    _setLoading('loginSubmit', true);
+    const { ok, data } = await _apiPost('/auth/login', { email, password, remember_me: remember });
+    _setLoading('loginSubmit', false);
+    if (ok && data.user) {
+      _setUser(data.user);
+      closeModal();
+    } else {
+      _setError('loginError', data.detail || 'Login failed. Please try again.');
+    }
+  }
+
+  async function signup() {
+    _setError('signupError', '');
+    const display_name = document.getElementById('signupName').value.trim() || null;
+    const email        = document.getElementById('signupEmail').value.trim();
+    const password     = document.getElementById('signupPassword').value;
+    if (!email || !password) { _setError('signupError', 'Email and password are required.'); return; }
+    _setLoading('signupSubmit', true);
+    const { ok, data } = await _apiPost('/auth/signup', { email, password, display_name });
+    _setLoading('signupSubmit', false);
+    if (ok && data.user) {
+      _setUser(data.user);
+      closeModal();
+    } else {
+      _setError('signupError', data.detail || 'Sign up failed. Please try again.');
+    }
+  }
+
+  async function logout() {
+    await _apiPost('/auth/logout', {});
+    _setUser(null);
+    closeModal();
+  }
+
+  async function init() {
+    // Silently check if the user already has a valid session cookie.
+    // Saves module is defined after Auth, so notify it after the event loop tick.
+    try {
+      const { ok, data } = await _apiGet('/auth/me');
+      if (ok && data.user) {
+        _user = data.user;
+        _updateHeaderBtn();
+        // Saves is now defined (async boundary guarantees script has fully parsed)
+        if (typeof Saves !== 'undefined') Saves.onLogin();
+      }
+    } catch {
+      // No database or network issue — silent fail, app still works
+    }
+  }
+
+  return { init, openModal, closeModal, handleOverlayClick, showTab, login, signup, logout };
+})();
+
+Auth.init();
+
+/* ═══════════════════ SAVES MODULE ═══════════════════ */
+const Saves = (() => {
+  // ── private helpers ────────────────────────────────────────────────────
+
+  function _authPanels(visible) {
+    document.querySelectorAll('.auth-hidden').forEach(el => {
+      el.classList.toggle('auth-hidden', !visible);
+    });
+  }
+
+  function _setMsg(text, type = '') {
+    const el = document.getElementById('saveMsg');
+    if (!el) return;
+    el.textContent = text;
+    el.className = 'save-bar-msg' + (type ? ' ' + type : '');
+    if (type === 'ok') setTimeout(() => { if (el.textContent === text) el.textContent = ''; }, 3000);
+  }
+
+  function _fmtDate(iso) {
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+  }
+
+  // ── auth visibility ────────────────────────────────────────────────────
+
+  function onLogin() {
+    // Show all .auth-hidden elements by removing the class
+    document.querySelectorAll('.auth-hidden').forEach(el => el.classList.remove('auth-hidden'));
+    loadList();
+  }
+
+  function onLogout() {
+    // Re-hide by re-adding the class
+    document.getElementById('saveBar')?.classList.add('auth-hidden');
+    document.getElementById('savedPanel')?.classList.add('auth-hidden');
+    document.getElementById('savedList').innerHTML = '<div class="saved-empty">Log in to see your saved analyses.</div>';
+  }
+
+  // ── save current analysis ──────────────────────────────────────────────
+
+  async function saveCurrentAnalysis() {
+    if (!runResults) { _setMsg('Run an analysis first.', 'err'); return; }
+    const nameEl = document.getElementById('saveNameInput');
+    const name = nameEl.value.trim();
+    if (!name) { _setMsg('Enter a name first.', 'err'); nameEl.focus(); return; }
+
+    const btn = document.getElementById('saveBtn');
+    btn.disabled = true;
+    _setMsg('Saving…');
+
+    const payload = {
+      name,
+      profile: runResults.profileKey,
+      risk:    runResults.riskKey,
+      tickers: runResults.scored.map(s => s.t),
+      results: {
+        scored:           runResults.scored.map(s => ({
+          t: s.t, n: s.n, score: s.score, signal: s.signal,
+          fundScore: s.fundScore, isLive: s.isLive,
+        })),
+        cvAccuracy:       runResults.cvAccuracy,
+        featureImportance: runResults.featureImportance,
+        backendLive:      runResults.backendLive,
+      },
+    };
+
+    try {
+      const r = await fetch('/user/analyses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload),
+      });
+      if (r.ok) {
+        _setMsg('Saved!', 'ok');
+        nameEl.value = '';
+        loadList();
+      } else {
+        const d = await r.json().catch(() => ({}));
+        _setMsg(d.detail || 'Save failed.', 'err');
+      }
+    } catch {
+      _setMsg('Network error.', 'err');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // ── list ───────────────────────────────────────────────────────────────
+
+  async function loadList() {
+    const container = document.getElementById('savedList');
+    if (!container) return;
+    container.innerHTML = '<div class="saved-empty">Loading…</div>';
+
+    try {
+      const r = await fetch('/user/analyses', { credentials: 'include' });
+      if (r.status === 401) {
+        container.innerHTML = '<div class="saved-empty">Log in to see your saved analyses.</div>';
+        return;
+      }
+      if (!r.ok) { container.innerHTML = '<div class="saved-empty">Could not load saved analyses.</div>'; return; }
+
+      const list = await r.json();
+      if (!list.length) {
+        container.innerHTML = '<div class="saved-empty">No saved analyses yet. Run an analysis and save it above.</div>';
+        return;
+      }
+
+      container.innerHTML = list.map(item => `
+        <div class="saved-item" data-id="${item.id}">
+          <div class="saved-item-info">
+            <div class="saved-item-name">${_esc(item.name)}</div>
+            <div class="saved-item-meta">${item.profile.toUpperCase()} · ${item.risk.toUpperCase()} · ${item.tickers.length} stocks · ${_fmtDate(item.created_at)}</div>
+          </div>
+          <button class="saved-item-load" onclick="Saves.loadAnalysis('${item.id}')">LOAD</button>
+          <button class="saved-item-del"  onclick="Saves.deleteAnalysis('${item.id}', this)">✕</button>
+        </div>
+      `).join('');
+    } catch {
+      container.innerHTML = '<div class="saved-empty">Could not load saved analyses.</div>';
+    }
+  }
+
+  // ── load one analysis ──────────────────────────────────────────────────
+
+  async function loadAnalysis(id) {
+    try {
+      const r = await fetch(`/user/analyses/${id}`, { credentials: 'include' });
+      if (!r.ok) { alert('Could not load this analysis.'); return; }
+      const item = await r.json();
+
+      // Reconstruct a minimal runResults and render it
+      const R = {
+        scored:            item.results.scored || [],
+        profileKey:        item.profile,
+        riskKey:           item.risk,
+        profile:           PROFILES[item.profile] || PROFILES['quality'],
+        useFF5:            true,
+        folds:             5,
+        lambda:            0.10,
+        cvAccuracy:        item.results.cvAccuracy || null,
+        featureImportance: item.results.featureImportance || {},
+        backendLive:       false,
+      };
+      runResults = R;
+      renderResults(R);
+    } catch {
+      alert('Could not load this analysis.');
+    }
+  }
+
+  // ── delete ─────────────────────────────────────────────────────────────
+
+  async function deleteAnalysis(id, btn) {
+    if (!confirm('Delete this saved analysis?')) return;
+    btn.disabled = true;
+    try {
+      const r = await fetch(`/user/analyses/${id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (r.ok || r.status === 204) {
+        btn.closest('.saved-item').remove();
+        const container = document.getElementById('savedList');
+        if (container && !container.querySelector('.saved-item')) {
+          container.innerHTML = '<div class="saved-empty">No saved analyses yet. Run an analysis and save it above.</div>';
+        }
+      } else {
+        btn.disabled = false;
+        alert('Could not delete this analysis.');
+      }
+    } catch {
+      btn.disabled = false;
+    }
+  }
+
+  // ── html escape ────────────────────────────────────────────────────────
+
+  function _esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  return { onLogin, onLogout, saveCurrentAnalysis, loadList, loadAnalysis, deleteAnalysis };
+})();
 </script>
+
+<!-- ═══════════════════ AUTH MODAL ═══════════════════ -->
+<div class="auth-overlay" id="authOverlay" onclick="Auth.handleOverlayClick(event)">
+  <div class="auth-modal" role="dialog" aria-modal="true" aria-label="Account">
+    <button class="auth-close" onclick="Auth.closeModal()" aria-label="Close">&times;</button>
+
+    <!-- Tab bar — hidden when showing account panel -->
+    <div class="auth-tabs" id="authTabs">
+      <button class="auth-tab active" id="tabLogin"  onclick="Auth.showTab('login')">LOG IN</button>
+      <button class="auth-tab"        id="tabSignup" onclick="Auth.showTab('signup')">SIGN UP</button>
+    </div>
+
+    <!-- ── Login panel ── -->
+    <div class="auth-panel active" id="panelLogin">
+      <div class="auth-field">
+        <label for="loginEmail">Email</label>
+        <input id="loginEmail" type="email" autocomplete="email" placeholder="you@example.com">
+      </div>
+      <div class="auth-field">
+        <label for="loginPassword">Password</label>
+        <input id="loginPassword" type="password" autocomplete="current-password" placeholder="••••••••">
+      </div>
+      <label class="auth-remember">
+        <input type="checkbox" id="loginRemember">
+        <span>Stay logged in for 30 days</span>
+      </label>
+      <button class="auth-submit" id="loginSubmit" onclick="Auth.login()">LOG IN</button>
+      <div class="auth-error" id="loginError"></div>
+    </div>
+
+    <!-- ── Signup panel ── -->
+    <div class="auth-panel" id="panelSignup">
+      <div class="auth-field">
+        <label for="signupName">Display name (optional)</label>
+        <input id="signupName" type="text" autocomplete="name" placeholder="Your name">
+      </div>
+      <div class="auth-field">
+        <label for="signupEmail">Email</label>
+        <input id="signupEmail" type="email" autocomplete="email" placeholder="you@example.com">
+      </div>
+      <div class="auth-field">
+        <label for="signupPassword">Password <span style="color:var(--text3)">(min 8 chars)</span></label>
+        <input id="signupPassword" type="password" autocomplete="new-password" placeholder="••••••••">
+      </div>
+      <button class="auth-submit" id="signupSubmit" onclick="Auth.signup()">CREATE ACCOUNT</button>
+      <div class="auth-error" id="signupError"></div>
+    </div>
+
+    <!-- ── Account panel (shown when logged in) ── -->
+    <div class="auth-panel" id="panelAccount">
+      <div class="auth-user-info">
+        <div class="auth-user-email" id="accountEmail"></div>
+        <div class="auth-user-since" id="accountSince"></div>
+      </div>
+      <button class="auth-logout-btn" onclick="Auth.logout()">LOG OUT</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
