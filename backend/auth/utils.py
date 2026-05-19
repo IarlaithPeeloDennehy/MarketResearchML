@@ -26,13 +26,19 @@ SESSION_TTL_LONG  = timedelta(days=30)    # "remember me"
 
 
 # ── passwords ──────────────────────────────────────────────────────────────
+# bcrypt truncates at 72 bytes. SHA-256 pre-hashing collapses any password
+# to a 64-char hex string, lifting that limit without weakening security.
+
+def _prehash(plain: str) -> str:
+    return hashlib.sha256(plain.encode("utf-8")).hexdigest()
+
 
 def hash_password(plain: str) -> str:
-    return _pwd_context.hash(plain)
+    return _pwd_context.hash(_prehash(plain))
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return _pwd_context.verify(plain, hashed)
+    return _pwd_context.verify(_prehash(plain), hashed)
 
 
 # ── session tokens ─────────────────────────────────────────────────────────
