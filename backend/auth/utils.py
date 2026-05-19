@@ -15,11 +15,7 @@ import os
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from passlib.context import CryptContext
-
-# bcrypt rounds=12 is the passlib default — ~250ms on modern hardware,
-# which is slow enough to deter brute force but fast enough for login UX
-_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+import bcrypt as _bcrypt
 
 SESSION_TTL_SHORT = timedelta(hours=24)   # standard session
 SESSION_TTL_LONG  = timedelta(days=30)    # "remember me"
@@ -34,11 +30,11 @@ def _prehash(plain: str) -> str:
 
 
 def hash_password(plain: str) -> str:
-    return _pwd_context.hash(_prehash(plain))
+    return _bcrypt.hashpw(_prehash(plain).encode(), _bcrypt.gensalt(rounds=12)).decode()
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return _pwd_context.verify(_prehash(plain), hashed)
+    return _bcrypt.checkpw(_prehash(plain).encode(), hashed.encode())
 
 
 # ── session tokens ─────────────────────────────────────────────────────────
