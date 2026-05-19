@@ -23,7 +23,7 @@ from sqlmodel import Session, select, col
 
 from auth.dependencies import get_current_user
 from auth.models import (
-    ActivityEvent, SavedAnalysis, User, UserPreferences,
+    ActivityEvent, SavedAnalysis, User, UserPreferences, UserSession,
 )
 from db.session import get_db
 
@@ -271,3 +271,59 @@ def get_history(
         )
         for r in rows
     ]
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# SESSIONS
+# ══════════════════════════════════════════════════════════════════════════
+
+class SessionOut(BaseModel):
+    id:           str
+    created_at:   datetime
+    expires_at:   datetime
+    ip_address:   Optional[str]
+    user_agent:   Optional[str]
+
+
+@router.get("/sessions", response_model=List[SessionOut])
+def list_sessions(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return all non-expired, non-revoked sessions for the current user."""
+    now = datetime.now(timezone.utc)
+    stmt = (
+        select(UserSession)
+        .where(
+            UserSession.user_id  == current_user.id,
+            UserSession.revoked  == False,       # noqa: E712
+            UserSession.expires_at > now,
+        )
+        .order_by(col(UserSession.created_at).desc())
+    )
+    rows = db.exec(stmt).all()
+    return [
+        SessionOut(
+            id=r.id,
+            created_at=r.created_at,
+            expires_at=r.expires_at,
+            ip_address=r.ip_address,
+            user_agent=r.user_agent,
+        )
+        for r in rows
+    ]
+
+
+@router.delete("/sessions/{session_id}", status_code=204)
+def revoke_session(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Revoke a specific session. 404 if not found or belongs to another user."""
+    row = db.get(UserSession, session_id)
+    if row is None or row.user_id != current_user.id:
+        raise HTTPException(404, "Session not found.")
+    row.revoked = True
+    _log(db, current_user.id, "session_revoked", {"session_id": session_id})
+    db.commit()

@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'">
+<meta http-equiv="X-Content-Type-Options" content="nosniff">
 <title>NUMKT — Multi-Market ML Stock Analyser</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
@@ -1037,6 +1039,21 @@ option{background:var(--bg);color:var(--text1)}
 .acct-pwd-msg{font-size:11px;text-align:center;min-height:16px}
 .acct-pwd-msg.ok{color:var(--primary)}
 .acct-pwd-msg.err{color:#f87171}
+.acct-sessions{display:flex;flex-direction:column;gap:4px;margin-bottom:12px;max-height:160px;overflow-y:auto}
+.acct-session{
+  display:flex;align-items:center;gap:8px;padding:5px 6px;
+  background:var(--bg2);border-radius:var(--r1);
+}
+.acct-session-info{flex:1;min-width:0}
+.acct-session-ip{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--text2);letter-spacing:0.03em}
+.acct-session-ua{font-size:9px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px}
+.acct-session-time{font-family:'JetBrains Mono',monospace;font-size:8px;color:var(--text3);white-space:nowrap}
+.acct-session-revoke{
+  background:none;border:1px solid rgba(248,113,113,0.3);border-radius:var(--r1);
+  font-family:'JetBrains Mono',monospace;font-size:8px;color:#f87171;
+  padding:2px 6px;cursor:pointer;transition:all 0.2s;flex-shrink:0;
+}
+.acct-session-revoke:hover{background:rgba(248,113,113,0.1);border-color:rgba(248,113,113,0.6)}
 .acct-danger-zone{
   margin-top:12px;border-top:1px solid var(--border);padding-top:12px;
 }
@@ -2167,6 +2184,67 @@ const Auth = (() => {
         _renderActivity(r.data.slice(0, 6));
       }
     } catch { /* silent */ }
+
+    // Active sessions
+    try {
+      const r = await _apiGet('/user/sessions');
+      if (r.ok && Array.isArray(r.data)) _renderSessions(r.data);
+    } catch { /* silent */ }
+  }
+
+  function _renderSessions(sessions) {
+    const el = document.getElementById('acctSessions');
+    if (!el) return;
+    if (!sessions.length) {
+      el.innerHTML = '<div class="acct-activity-empty">No active sessions found.</div>';
+      return;
+    }
+    const _rel = iso => {
+      const diff = Date.now() - new Date(iso);
+      const mins = Math.floor(diff / 60000);
+      if (mins < 1)  return 'just now';
+      if (mins < 60) return mins + 'm ago';
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24)  return hrs + 'h ago';
+      return Math.floor(hrs / 24) + 'd ago';
+    };
+    const _ua = ua => {
+      if (!ua) return 'Unknown device';
+      if (/mobile|android/i.test(ua)) return 'Mobile browser';
+      if (/chrome/i.test(ua))  return 'Chrome';
+      if (/firefox/i.test(ua)) return 'Firefox';
+      if (/safari/i.test(ua))  return 'Safari';
+      return 'Browser';
+    };
+    el.innerHTML = sessions.map(s => `
+      <div class="acct-session" id="sess-${s.id}">
+        <div class="acct-session-info">
+          <div class="acct-session-ip">${s.ip_address || 'Unknown IP'}</div>
+          <div class="acct-session-ua">${_ua(s.user_agent)}</div>
+        </div>
+        <div class="acct-session-time">${_rel(s.created_at)}</div>
+        <button class="acct-session-revoke" onclick="Auth.revokeSession('${s.id}',this)">REVOKE</button>
+      </div>`).join('');
+  }
+
+  async function revokeSession(sessionId, btn) {
+    btn.disabled = true;
+    btn.textContent = '…';
+    const r = await fetch('/user/sessions/' + sessionId, { method: 'DELETE', credentials: 'include' });
+    const ok = r.ok;
+    if (ok) {
+      const row = document.getElementById('sess-' + sessionId);
+      if (row) row.remove();
+      const el = document.getElementById('acctSessions');
+      if (el && !el.querySelector('.acct-session')) {
+        el.innerHTML = '<div class="acct-activity-empty">No active sessions found.</div>';
+      }
+      _showToast('Session revoked.', 'ok');
+    } else {
+      btn.disabled = false;
+      btn.textContent = 'REVOKE';
+      _showToast('Could not revoke session.', 'err');
+    }
   }
 
   function _renderActivity(events) {
@@ -2426,7 +2504,7 @@ const Auth = (() => {
     }, 80);
   }
 
-  return { init, openModal, closeModal, handleOverlayClick, showTab, login, signup, logout, saveDisplayName, togglePwdForm, changePassword, toggleDeleteForm, deleteAccount, isLoggedIn, handleSessionExpiry };
+  return { init, openModal, closeModal, handleOverlayClick, showTab, login, signup, logout, saveDisplayName, togglePwdForm, changePassword, toggleDeleteForm, deleteAccount, revokeSession, isLoggedIn, handleSessionExpiry };
 })();
 
 Auth.init();
@@ -2858,6 +2936,12 @@ const Saves = (() => {
       <!-- Recent activity -->
       <div class="acct-section-label">Recent Activity</div>
       <div class="acct-activity" id="acctActivity">
+        <div class="acct-activity-empty">Loading…</div>
+      </div>
+
+      <!-- Active sessions -->
+      <div class="acct-section-label">Active Sessions</div>
+      <div class="acct-sessions" id="acctSessions">
         <div class="acct-activity-empty">Loading…</div>
       </div>
 

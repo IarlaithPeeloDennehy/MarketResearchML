@@ -31,6 +31,8 @@ services:
         value: ""          # leave blank to use backend/cache/ (ephemeral on free tier)
       - key: PYTHON_VERSION
         value: "3.11.9"
+      - key: SECRET_KEY
+        generateValue: true   # Render generates a random value on first deploy
 
 databases:
   - name: numrkt-db

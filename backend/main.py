@@ -10,7 +10,7 @@ Changes from v1:
   - New /cache and /model endpoints for visibility
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -28,6 +28,7 @@ warnings.filterwarnings("ignore")
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from sqlmodel import select, or_
 
 # Absolute path to index.html — works regardless of working directory.
 # main.py lives in backend/, so parent.parent is the project root.
@@ -40,7 +41,9 @@ from ml.model import NUMKTEnsemble
 from ml.backtest import run_backtest
 from ml.scoring import score_universe
 from auth.router import router as auth_router
+from auth.models import UserSession
 from user.router import router as user_router
+from db.session import get_db
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -57,6 +60,37 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# ── Security headers ───────────────────────────────────────────────────────
+# Applied to every response. CSP is permissive enough for:
+#   - inline <script> (the entire frontend JS lives in index.html)
+#   - Chart.js from cdnjs
+#   - Google Fonts (stylesheet + gstatic fonts)
+# HSTS is only emitted over HTTPS (Render sets X-Forwarded-Proto=https).
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+    "font-src 'self' https://fonts.gstatic.com; "
+    "img-src 'self' data:; "
+    "connect-src 'self'; "
+    "frame-ancestors 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'"
+)
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"]  = "nosniff"
+    response.headers["X-Frame-Options"]          = "DENY"
+    response.headers["Referrer-Policy"]          = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"]       = "geolocation=(), microphone=(), camera=()"
+    response.headers["Content-Security-Policy"]  = _CSP
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    if proto == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
 
 # CORS — because the frontend is served by this same FastAPI app, all browser
 # fetch() calls are same-origin and CORS headers are not consulted by the browser.
@@ -86,6 +120,23 @@ _data_cache:  dict = {}   # "latest" -> raw_data, features_df
 # ── Load any previously trained models on startup ─────────────────────────
 @app.on_event("startup")
 async def startup():
+    # ── Prune stale sessions ───────────────────────────────────────────────
+    try:
+        for db in get_db():
+            now = datetime.now(timezone.utc)
+            stmt = select(UserSession).where(
+                or_(UserSession.expires_at < now, UserSession.revoked == True)  # noqa: E712
+            )
+            stale = db.exec(stmt).all()
+            for s in stale:
+                db.delete(s)
+            db.commit()
+            if stale:
+                logger.info(f"Pruned {len(stale)} expired/revoked session(s)")
+    except Exception as exc:
+        logger.warning(f"Session pruning skipped (DB may not be ready): {exc}")
+
+    # ── Load saved ML model ────────────────────────────────────────────────
     saved = NUMKTEnsemble.list_saved()
     if saved:
         logger.info(f"Found {len(saved)} saved model(s):")
@@ -93,7 +144,6 @@ async def startup():
             logger.info(f"  {m['name']} — trained {m['trained_at']} "
                         f"on {m['n_training_rows']} rows ({m['training_source']}) "
                         f"CV={m['cv_accuracy']:.3f}")
-        # Load the default model into cache
         model = NUMKTEnsemble.load("default")
         if model:
             _model_cache["__trained__"] = model
@@ -164,7 +214,8 @@ def api_status():
 # ── Main analysis ──────────────────────────────────────────────────────────
 
 @app.post("/analyse")
-async def analyse(req: AnalyseRequest):
+@limiter.limit("10/minute")
+async def analyse(request: Request, req: AnalyseRequest):
     if len(req.tickers) < 3:
         raise HTTPException(400, "Please provide at least 3 tickers.")
     if len(req.tickers) > 40:
@@ -231,7 +282,8 @@ async def analyse(req: AnalyseRequest):
 # ── Backtest + train ───────────────────────────────────────────────────────
 
 @app.post("/backtest")
-async def backtest(req: BacktestRequest):
+@limiter.limit("3/minute")
+async def backtest(request: Request, req: BacktestRequest):
     """
     Runs walk-forward backtest AND trains the model on real returns.
     After this runs, /analyse will use the trained model automatically.
