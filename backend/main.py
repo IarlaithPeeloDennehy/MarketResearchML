@@ -21,6 +21,7 @@ import pandas as pd
 from datetime import datetime, timezone
 import logging
 import asyncio
+import os
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -57,11 +58,19 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# CORS — because the frontend is served by this same FastAPI app, all browser
+# fetch() calls are same-origin and CORS headers are not consulted by the browser.
+# The origin list here only matters if a *separate* frontend domain calls this API.
+# ALLOWED_ORIGINS env var lets you add those domains without touching code.
+# Example: ALLOWED_ORIGINS=https://app.example.com,https://staging.example.com
+_raw_origins = os.environ.get("ALLOWED_ORIGINS", "")
+_extra_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "DELETE"],
+    allow_origins=_extra_origins or ["*"],   # lock down if env var is set
+    allow_credentials=bool(_extra_origins),  # credentials only when origins are explicit
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Content-Type"],
 )
 

@@ -993,6 +993,34 @@ option{background:var(--bg);color:var(--text1)}
 .acct-name-msg{font-size:11px;margin-top:4px;min-height:16px;text-align:center}
 .acct-name-msg.ok{color:var(--primary)}
 .acct-name-msg.err{color:#f87171}
+.acct-pwd-toggle{
+  width:100%;padding:7px;margin-bottom:8px;
+  background:none;border:1px dashed var(--border2);border-radius:var(--r2);
+  font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:0.07em;
+  color:var(--text3);cursor:pointer;transition:all 0.2s;text-align:center;
+}
+.acct-pwd-toggle:hover{border-color:var(--border3);color:var(--text2)}
+.acct-pwd-form{display:none;flex-direction:column;gap:8px;margin-bottom:8px}
+.acct-pwd-form.open{display:flex}
+.acct-pwd-form input{
+  background:var(--surface2);border:1px solid var(--border2);
+  border-radius:var(--r2);padding:8px 10px;
+  color:var(--text1);font-family:'Inter',sans-serif;font-size:12px;
+  outline:none;transition:border-color 0.2s;
+}
+.acct-pwd-form input:focus{border-color:var(--primary)}
+.acct-pwd-form input::placeholder{color:var(--text3)}
+.acct-pwd-submit{
+  padding:8px;border:none;border-radius:var(--r2);
+  background:var(--primary);color:#0a0b14;
+  font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.07em;font-weight:600;
+  cursor:pointer;transition:opacity 0.2s;
+}
+.acct-pwd-submit:hover{opacity:0.88}
+.acct-pwd-submit:disabled{opacity:0.45;cursor:not-allowed}
+.acct-pwd-msg{font-size:11px;text-align:center;min-height:16px}
+.acct-pwd-msg.ok{color:var(--primary)}
+.acct-pwd-msg.err{color:#f87171}
 </style>
 </head>
 <body>
@@ -1981,6 +2009,17 @@ const Auth = (() => {
       document.getElementById('acctNameMsg').textContent   = '';
       document.getElementById('acctNameMsg').className     = 'acct-name-msg';
 
+      // Collapse password form on every open
+      const pwdForm = document.getElementById('acctPwdForm');
+      if (pwdForm) {
+        pwdForm.classList.remove('open');
+        document.getElementById('acctPwdToggle').textContent = 'CHANGE PASSWORD ↓';
+        ['acctPwdCurrent','acctPwdNew','acctPwdConfirm'].forEach(id => {
+          document.getElementById(id).value = '';
+        });
+        document.getElementById('acctPwdMsg').textContent = '';
+      }
+
       const daysSince = Math.floor((Date.now() - new Date(_user.created_at)) / 86400000);
       document.getElementById('acctDaysSince').textContent = daysSince;
     }
@@ -2123,6 +2162,61 @@ const Auth = (() => {
     }
   }
 
+  function togglePwdForm() {
+    const form   = document.getElementById('acctPwdForm');
+    const toggle = document.getElementById('acctPwdToggle');
+    const open   = form.classList.toggle('open');
+    toggle.textContent = open ? 'CHANGE PASSWORD ↑' : 'CHANGE PASSWORD ↓';
+    if (open) {
+      document.getElementById('acctPwdCurrent').focus();
+    } else {
+      // Clear fields when collapsing
+      ['acctPwdCurrent','acctPwdNew','acctPwdConfirm'].forEach(id => {
+        document.getElementById(id).value = '';
+      });
+      document.getElementById('acctPwdMsg').textContent = '';
+      document.getElementById('acctPwdMsg').className   = 'acct-pwd-msg';
+    }
+  }
+
+  async function changePassword() {
+    const current  = document.getElementById('acctPwdCurrent').value;
+    const newPwd   = document.getElementById('acctPwdNew').value;
+    const confirm  = document.getElementById('acctPwdConfirm').value;
+    const msgEl    = document.getElementById('acctPwdMsg');
+    const btn      = document.getElementById('acctPwdSubmit');
+
+    const _msg = (text, type = '') => {
+      msgEl.textContent = text;
+      msgEl.className   = 'acct-pwd-msg' + (type ? ' ' + type : '');
+    };
+
+    if (!current || !newPwd || !confirm) { _msg('All fields are required.', 'err'); return; }
+    if (newPwd.length < 8)               { _msg('New password must be at least 8 characters.', 'err'); return; }
+    if (newPwd !== confirm)              { _msg('Passwords do not match.', 'err'); return; }
+
+    btn.disabled = true;
+    _msg('Updating…');
+
+    const { ok, data } = await _apiPost('/auth/change-password', {
+      current_password: current,
+      new_password:     newPwd,
+    });
+
+    btn.disabled = false;
+
+    if (ok) {
+      _msg(data.message || 'Password updated successfully.', 'ok');
+      ['acctPwdCurrent','acctPwdNew','acctPwdConfirm'].forEach(id => {
+        document.getElementById(id).value = '';
+      });
+      // Collapse the form after a short delay
+      setTimeout(() => togglePwdForm(), 2200);
+    } else {
+      _msg(data.detail || 'Could not update password.', 'err');
+    }
+  }
+
   async function saveDisplayName() {
     const input = document.getElementById('acctNameInput');
     const msgEl = document.getElementById('acctNameMsg');
@@ -2151,7 +2245,7 @@ const Auth = (() => {
     }
   }
 
-  return { init, openModal, closeModal, handleOverlayClick, showTab, login, signup, logout, saveDisplayName };
+  return { init, openModal, closeModal, handleOverlayClick, showTab, login, signup, logout, saveDisplayName, togglePwdForm, changePassword };
 })();
 
 Auth.init();
@@ -2520,6 +2614,16 @@ const Saves = (() => {
       <div class="acct-section-label">Recent Activity</div>
       <div class="acct-activity" id="acctActivity">
         <div class="acct-activity-empty">Loading…</div>
+      </div>
+
+      <!-- Change password (collapsed by default) -->
+      <button class="acct-pwd-toggle" id="acctPwdToggle" onclick="Auth.togglePwdForm()">CHANGE PASSWORD ↓</button>
+      <div class="acct-pwd-form" id="acctPwdForm">
+        <input id="acctPwdCurrent"  type="password" autocomplete="current-password" placeholder="Current password">
+        <input id="acctPwdNew"      type="password" autocomplete="new-password"     placeholder="New password (min 8 chars)">
+        <input id="acctPwdConfirm" type="password" autocomplete="new-password"     placeholder="Confirm new password">
+        <button class="acct-pwd-submit" id="acctPwdSubmit" onclick="Auth.changePassword()">UPDATE PASSWORD</button>
+        <div class="acct-pwd-msg" id="acctPwdMsg"></div>
       </div>
 
       <button class="auth-logout-btn" onclick="Auth.logout()">LOG OUT</button>

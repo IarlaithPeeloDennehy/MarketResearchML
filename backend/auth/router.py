@@ -277,3 +277,57 @@ def update_me(
         display_name=current_user.display_name,
         created_at=current_user.created_at,
     )}
+
+
+# ── POST /auth/change-password ─────────────────────────────────────────────
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password:     str
+
+    @field_validator("new_password")
+    @classmethod
+    def new_pwd_strength(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("New password must be at least 8 characters.")
+        return v
+
+
+@router.post("/change-password")
+@limiter.limit("5/minute")
+def change_password(
+    body: ChangePasswordRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Requires the current password to prevent account takeover via a stolen cookie.
+    Revokes all OTHER active sessions so stolen sessions stop working immediately.
+    Keeps the caller's current session alive — user stays logged in.
+    """
+    if not verify_password(body.current_password, current_user.password_hash):
+        raise HTTPException(400, "Current password is incorrect.")
+
+    if body.current_password == body.new_password:
+        raise HTTPException(400, "New password must differ from the current one.")
+
+    # Identify the caller's session so we can preserve it
+    raw_token    = request.cookies.get(_COOKIE_NAME, "")
+    current_hash = hash_token(raw_token) if raw_token else None
+
+    # Revoke every other active session
+    stmt = select(UserSession).where(
+        UserSession.user_id == current_user.id,
+        UserSession.revoked  == False,  # noqa: E712
+    )
+    for s in db.exec(stmt).all():
+        if s.token_hash != current_hash:
+            s.revoked = True
+
+    current_user.password_hash = hash_password(body.new_password)
+    _log_event(db, current_user.id, "password_changed", request)
+    db.add(current_user)
+    db.commit()
+
+    return {"status": "ok", "message": "Password changed. Other sessions have been signed out."}
