@@ -1647,10 +1647,13 @@ function renderResults(R){
   const{scored,profileKey,riskKey,profile,useFF5,folds,lambda}=R;
   document.getElementById('welcomeScreen').style.display='none';
   document.getElementById('resultsScreen').style.display='block';
+  // Saved-analyses panel belongs on the welcome screen, not above results
+  const savedPanel=document.getElementById('savedPanel');
+  if(savedPanel)savedPanel.style.display='none';
 
-  // Pre-fill save name with a sensible default
+  // Always refresh the save-name prefill so each new analysis gets its own default
   const nameInput = document.getElementById('saveNameInput');
-  if (nameInput && !nameInput.value) {
+  if (nameInput) {
     const top3 = scored.slice(0, 3).map(s => s.t).join(', ');
     nameInput.value = `${profile.l} — ${top3}`;
   }
@@ -2548,6 +2551,11 @@ const Saves = (() => {
   function onLogin() {
     // Show all .auth-hidden elements by removing the class
     document.querySelectorAll('.auth-hidden').forEach(el => el.classList.remove('auth-hidden'));
+    // Restore savedPanel display — renderResults hides it via inline style
+    // so removing the class alone isn't enough when results are not showing
+    const resultsVisible = document.getElementById('resultsScreen')?.style.display === 'block';
+    const savedPanel = document.getElementById('savedPanel');
+    if (savedPanel && !resultsVisible) savedPanel.style.display = '';
     loadList();
     // Apply saved preferences to the sidebar
     Prefs.loadAndApply();
@@ -2579,13 +2587,26 @@ const Saves = (() => {
       risk:    runResults.riskKey,
       tickers: runResults.scored.map(s => s.t),
       results: {
-        scored:           runResults.scored.map(s => ({
-          t: s.t, n: s.n, score: s.score, signal: s.signal,
-          fundScore: s.fundScore, isLive: s.isLive,
+        // Store every field renderResults, buildBuyReasons, renderCharts need.
+        // Omitting any of these causes broken table rows and missing chart data
+        // when the analysis is loaded back from the server.
+        scored: runResults.scored.map(s => ({
+          t: s.t, n: s.n, s: s.s, m: s.m, p: s.p,
+          score: s.score, fundScore: s.fundScore,
+          signal: s.signal, buyReasons: s.buyReasons || [],
+          ff: s.ff || { hml:0, rmw:0, cma:0, smb:0, mom:0, alphaEst:0 },
+          pe: s.pe, roe: s.roe, mg: s.mg, de: s.de,
+          dy: s.dy, rg: s.rg, m12: s.m12, beta: s.beta, mc: s.mc,
+          instPct: s.instPct ?? null, insiderPct: s.insiderPct ?? null,
+          isLive: s.isLive,
         })),
-        cvAccuracy:       runResults.cvAccuracy,
+        cvAccuracy:        runResults.cvAccuracy,
         featureImportance: runResults.featureImportance,
-        backendLive:      runResults.backendLive,
+        backendLive:       runResults.backendLive,
+        profileKey:        runResults.profileKey,
+        riskKey:           runResults.riskKey,
+        folds:             runResults.folds,
+        lambda:            runResults.lambda,
       },
     };
 
@@ -2652,33 +2673,73 @@ const Saves = (() => {
   async function loadAnalysis(id) {
     try {
       const r = await fetch(`/user/analyses/${id}`, { credentials: 'include' });
-      if (!r.ok) { alert('Could not load this analysis.'); return; }
+      if (!r.ok) { _showToast('Could not load this analysis.', 'err'); return; }
       const item = await r.json();
+      const res  = item.results || {};
 
-      // Reconstruct a minimal runResults and render it
+      // All rendering fields were saved in full — pass them straight through.
+      // Fall back to safe defaults for any field missing in older saves.
       const R = {
-        scored:            item.results.scored || [],
-        profileKey:        item.profile,
-        riskKey:           item.risk,
+        scored:            (res.scored || []).map(s => ({
+          ...s,
+          s:          s.s   || 'Unknown',
+          m:          s.m   || 'US',
+          p:          s.p   || 0,
+          ff:         s.ff  || { hml:0, rmw:0, cma:0, smb:0, mom:0, alphaEst:0 },
+          buyReasons: s.buyReasons || [],
+          pe: s.pe ?? null, roe: s.roe ?? null, mg: s.mg ?? null,
+          de: s.de ?? null, dy: s.dy ?? null,   rg: s.rg ?? null,
+          m12: s.m12 ?? null, beta: s.beta ?? null, mc: s.mc ?? null,
+          instPct: s.instPct ?? null, insiderPct: s.insiderPct ?? null,
+        })),
+        profileKey:        res.profileKey        || item.profile,
+        riskKey:           res.riskKey           || item.risk,
         profile:           PROFILES[item.profile] || PROFILES['quality'],
         useFF5:            true,
-        folds:             5,
-        lambda:            0.10,
-        cvAccuracy:        item.results.cvAccuracy || null,
-        featureImportance: item.results.featureImportance || {},
+        folds:             res.folds  || 5,
+        lambda:            res.lambda || 0.10,
+        cvAccuracy:        res.cvAccuracy        || null,
+        featureImportance: res.featureImportance || {},
         backendLive:       false,
       };
       runResults = R;
       renderResults(R);
+      _showToast(`Loaded "${item.name}"`, 'ok');
     } catch {
-      alert('Could not load this analysis.');
+      _showToast('Could not load this analysis.', 'err');
     }
   }
 
   // ── delete ─────────────────────────────────────────────────────────────
 
   async function deleteAnalysis(id, btn) {
-    if (!confirm('Delete this saved analysis?')) return;
+    // Two-stage: first click arms the button, second click confirms.
+    // Reset any other armed buttons first so only one is armed at a time.
+    if (!btn.dataset.armed) {
+      document.querySelectorAll('.saved-item-del[data-armed]').forEach(b => {
+        delete b.dataset.armed;
+        b.textContent = '✕';
+        b.style.borderColor = '';
+        b.style.color = '';
+      });
+      btn.dataset.armed  = '1';
+      btn.textContent    = 'SURE?';
+      btn.style.borderColor = '#f87171';
+      btn.style.color       = '#f87171';
+      // Auto-disarm after 4s
+      setTimeout(() => {
+        if (btn.dataset.armed) {
+          delete btn.dataset.armed;
+          btn.textContent    = '✕';
+          btn.style.borderColor = '';
+          btn.style.color       = '';
+        }
+      }, 4000);
+      return;
+    }
+
+    // Second click — confirmed
+    delete btn.dataset.armed;
     btn.disabled = true;
     try {
       const r = await fetch(`/user/analyses/${id}`, {
@@ -2686,17 +2747,23 @@ const Saves = (() => {
         credentials: 'include',
       });
       if (r.ok || r.status === 204) {
-        btn.closest('.saved-item').remove();
-        const container = document.getElementById('savedList');
-        if (container && !container.querySelector('.saved-item')) {
-          container.innerHTML = '<div class="saved-empty">No saved analyses yet. Run an analysis and save it above.</div>';
-        }
+        const item = btn.closest('.saved-item');
+        item.style.transition = 'opacity 0.2s';
+        item.style.opacity    = '0';
+        setTimeout(() => {
+          item.remove();
+          const container = document.getElementById('savedList');
+          if (container && !container.querySelector('.saved-item')) {
+            container.innerHTML = '<div class="saved-empty">No saved analyses yet. Run an analysis and save it above.</div>';
+          }
+        }, 200);
       } else {
         btn.disabled = false;
-        alert('Could not delete this analysis.');
+        _showToast('Could not delete this analysis.', 'err');
       }
     } catch {
       btn.disabled = false;
+      _showToast('Network error — please try again.', 'err');
     }
   }
 
