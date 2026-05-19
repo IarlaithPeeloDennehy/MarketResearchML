@@ -1,12 +1,15 @@
 """
 User-facing data endpoints.
 
-/user/preferences  GET  — fetch the current user's preferences
-/user/preferences  PUT  — update preferences (partial updates accepted)
+/user/preferences     GET  — fetch the current user's preferences
+/user/preferences     PUT  — update preferences (partial updates accepted)
 
-/user/analyses     GET  — list saved analyses (newest first)
-/user/analyses     POST — save a new analysis (from the last /analyse run)
-/user/analyses/{id} DELETE — delete one saved analysis
+/user/analyses        GET  — list saved analyses (newest first)
+/user/analyses        POST — save a new analysis
+/user/analyses/{id}   GET  — fetch one saved analysis with full results
+/user/analyses/{id}   DELETE — delete one saved analysis
+
+/user/history         GET  — paginated activity event log
 
 All endpoints require an authenticated session (get_current_user dependency).
 """
@@ -14,9 +17,9 @@ All endpoints require an authenticated session (get_current_user dependency).
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import Session, select, col
 
 from auth.dependencies import get_current_user
 from auth.models import (
@@ -224,3 +227,47 @@ def delete_analysis(
     _log(db, current_user.id, "analysis_deleted", {"analysis_id": analysis_id})
     db.delete(row)
     db.commit()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# HISTORY
+# ══════════════════════════════════════════════════════════════════════════
+
+class HistoryEventOut(BaseModel):
+    id:         int
+    event_type: str
+    payload:    Optional[dict]
+    created_at: datetime
+    ip_address: Optional[str]
+
+
+@router.get("/history", response_model=List[HistoryEventOut])
+def get_history(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    """
+    Returns the user's activity log (newest first).
+    Supports pagination via limit/offset query params.
+    IP addresses are included so the user can spot unexpected logins.
+    """
+    stmt = (
+        select(ActivityEvent)
+        .where(ActivityEvent.user_id == current_user.id)
+        .order_by(col(ActivityEvent.created_at).desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    rows = db.exec(stmt).all()
+    return [
+        HistoryEventOut(
+            id=r.id,
+            event_type=r.event_type,
+            payload=r.payload,
+            created_at=r.created_at,
+            ip_address=r.ip_address,
+        )
+        for r in rows
+    ]

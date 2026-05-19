@@ -239,3 +239,41 @@ def me(current_user: User = Depends(get_current_user)):
         display_name=current_user.display_name,
         created_at=current_user.created_at,
     )}
+
+
+# ── PATCH /auth/me ─────────────────────────────────────────────────────────
+
+class UpdateMeRequest(BaseModel):
+    display_name: Optional[str] = None
+
+    @field_validator("display_name")
+    @classmethod
+    def name_clean(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        v = v.strip()
+        if len(v) > 100:
+            raise ValueError("Display name must be 100 characters or fewer.")
+        return v or None   # empty string → None
+
+
+@router.patch("/me")
+def update_me(
+    body: UpdateMeRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if body.display_name is not None:
+        current_user.display_name = body.display_name
+    _log_event(db, current_user.id, "profile_updated", request,
+               {"fields": list(body.model_dump(exclude_none=True).keys())})
+    db.add(current_user)
+    db.commit()
+    db.refresh(current_user)
+    return {"status": "ok", "user": UserOut(
+        id=current_user.id,
+        email=current_user.email,
+        display_name=current_user.display_name,
+        created_at=current_user.created_at,
+    )}

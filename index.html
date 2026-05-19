@@ -750,6 +750,19 @@ option{background:var(--bg);color:var(--text1)}
 @media(max-width:1023px){.mobile-run-btn{display:block}}
 @media(max-width:1023px){.main{padding-bottom:90px}}
 
+/* ═══════════════════ SAVE DEFAULTS BUTTON ═══════════════════ */
+.save-defaults-btn{
+  display:block;width:calc(100% - 32px);margin:0 16px 10px;
+  padding:8px;border-radius:var(--r2);
+  border:1px dashed var(--border2);background:transparent;
+  font-family:'JetBrains Mono',monospace;font-size:9px;
+  letter-spacing:0.08em;color:var(--text3);
+  cursor:pointer;transition:all 0.2s;text-align:center;
+}
+.save-defaults-btn:hover{border-color:var(--primary-glow);color:var(--primary);background:var(--primary-dim)}
+.save-defaults-btn.auth-hidden{display:none}
+.save-defaults-btn.saving{opacity:0.5;cursor:not-allowed}
+
 /* ═══════════════════ SAVE BAR ═══════════════════ */
 .save-bar{
   display:flex;align-items:center;gap:10px;flex-wrap:wrap;
@@ -861,7 +874,7 @@ option{background:var(--bg);color:var(--text1)}
 .auth-modal{
   background:var(--surface);border:1px solid var(--border2);
   border-radius:var(--r3);padding:32px 28px;
-  width:min(380px,92vw);position:relative;
+  width:min(420px,92vw);position:relative;
   box-shadow:0 24px 80px rgba(0,0,0,0.6);
   animation:fadeUp 0.25s cubic-bezier(0.16,1,0.3,1) both;
 }
@@ -919,9 +932,67 @@ option{background:var(--bg);color:var(--text1)}
   width:100%;padding:9px;border:1px solid var(--border2);border-radius:var(--r2);
   background:transparent;color:var(--text2);
   font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.07em;
-  cursor:pointer;transition:all 0.2s;margin-top:4px;
+  cursor:pointer;transition:all 0.2s;margin-top:8px;
 }
 .auth-logout-btn:hover{background:var(--surface2);color:var(--text1)}
+
+/* account panel extras */
+.acct-avatar{
+  width:44px;height:44px;border-radius:50%;
+  background:var(--primary-dim);border:2px solid var(--primary-glow);
+  display:flex;align-items:center;justify-content:center;
+  font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:600;
+  color:var(--primary);margin:0 auto 10px;flex-shrink:0;
+}
+.acct-name{font-size:14px;font-weight:600;color:var(--text1);text-align:center;margin-bottom:2px}
+.acct-email{font-size:11px;color:var(--text3);text-align:center;margin-bottom:12px}
+.acct-name-row{display:flex;gap:6px;margin-bottom:14px}
+.acct-name-row input{
+  flex:1;background:var(--surface2);border:1px solid var(--border2);
+  border-radius:var(--r2);padding:7px 10px;
+  color:var(--text1);font-family:'Inter',sans-serif;font-size:12px;
+  outline:none;transition:border-color 0.2s;
+}
+.acct-name-row input:focus{border-color:var(--primary)}
+.acct-name-row button{
+  font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:0.06em;
+  padding:7px 11px;border-radius:var(--r2);
+  border:1px solid var(--border2);background:transparent;color:var(--text2);
+  cursor:pointer;white-space:nowrap;transition:all 0.2s;
+}
+.acct-name-row button:hover{border-color:var(--primary-glow);color:var(--primary);background:var(--primary-dim)}
+.acct-name-row button:disabled{opacity:0.4;cursor:not-allowed}
+.acct-stats{
+  display:flex;gap:8px;margin-bottom:14px;
+}
+.acct-stat{
+  flex:1;background:var(--surface2);border:1px solid var(--border);
+  border-radius:var(--r2);padding:8px 10px;text-align:center;
+}
+.acct-stat-val{font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:600;color:var(--primary)}
+.acct-stat-lbl{font-family:'JetBrains Mono',monospace;font-size:8px;color:var(--text3);letter-spacing:0.08em;margin-top:2px}
+.acct-section-label{
+  font-family:'JetBrains Mono',monospace;font-size:8px;letter-spacing:0.1em;
+  text-transform:uppercase;color:var(--text3);margin-bottom:6px;
+}
+.acct-activity{display:flex;flex-direction:column;gap:4px;margin-bottom:12px;max-height:140px;overflow-y:auto}
+.acct-event{
+  display:flex;align-items:center;gap:8px;
+  background:var(--surface2);border-radius:var(--r);padding:5px 8px;
+}
+.acct-event-dot{
+  width:6px;height:6px;border-radius:50%;flex-shrink:0;
+  background:var(--border3);
+}
+.acct-event-dot.login{background:var(--primary)}
+.acct-event-dot.signup{background:#60a5fa}
+.acct-event-dot.analysis{background:#a78bfa}
+.acct-event-type{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--text2);flex:1;letter-spacing:0.03em}
+.acct-event-time{font-family:'JetBrains Mono',monospace;font-size:8px;color:var(--text3);white-space:nowrap}
+.acct-activity-empty{font-size:11px;color:var(--text3);text-align:center;padding:8px 0}
+.acct-name-msg{font-size:11px;margin-top:4px;min-height:16px;text-align:center}
+.acct-name-msg.ok{color:var(--primary)}
+.acct-name-msg.err{color:#f87171}
 </style>
 </head>
 <body>
@@ -1006,6 +1077,11 @@ option{background:var(--bg);color:var(--text1)}
     <div class="tog-row"><span class="tog-label">Fama-French 5-factor model</span><label class="tog"><input type="checkbox" id="quantToggle" checked><span class="tog-sl"></span></label></div>
     <div class="tog-row"><span class="tog-label">Geopolitical risk overlay</span><label class="tog"><input type="checkbox" id="geoToggle"><span class="tog-sl"></span></label></div>
   </div>
+
+  <!-- Save current sidebar state as user defaults — hidden until logged in -->
+  <button class="save-defaults-btn auth-hidden" id="saveDefaultsBtn" onclick="Prefs.saveDefaults()">
+    SAVE AS MY DEFAULTS
+  </button>
 
   <button class="run-btn" id="runBtn">RUN ANALYSIS ↗</button>
 </aside>
@@ -1826,9 +1902,9 @@ const Auth = (() => {
 
   // ── private helpers ────────────────────────────────────────────────────
 
-  async function _apiPost(path, body) {
+  async function _apiPost(path, body, method = 'POST') {
     const r = await fetch(path, {
-      method: 'POST',
+      method,
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
       body: JSON.stringify(body),
@@ -1897,10 +1973,69 @@ const Auth = (() => {
     ['Login','Signup'].forEach(p => document.getElementById('panel'+p).classList.remove('active'));
     document.getElementById('panelAccount').classList.add('active');
     if (_user) {
-      document.getElementById('accountEmail').textContent = _user.email;
-      const since = new Date(_user.created_at).toLocaleDateString('en-GB', { year:'numeric', month:'short' });
-      document.getElementById('accountSince').textContent = 'MEMBER SINCE ' + since.toUpperCase();
+      const initials = (_user.display_name || _user.email).slice(0, 1).toUpperCase();
+      document.getElementById('acctAvatar').textContent    = initials;
+      document.getElementById('acctName').textContent      = _user.display_name || '—';
+      document.getElementById('acctEmail').textContent     = _user.email;
+      document.getElementById('acctNameInput').value       = _user.display_name || '';
+      document.getElementById('acctNameMsg').textContent   = '';
+      document.getElementById('acctNameMsg').className     = 'acct-name-msg';
+
+      const daysSince = Math.floor((Date.now() - new Date(_user.created_at)) / 86400000);
+      document.getElementById('acctDaysSince').textContent = daysSince;
     }
+    // Load live stats + activity in the background
+    _loadAccountData();
+  }
+
+  async function _loadAccountData() {
+    // Saved analyses count
+    try {
+      const r = await _apiGet('/user/analyses');
+      if (r.ok) {
+        document.getElementById('acctSavedCount').textContent = r.data.length;
+      }
+    } catch { /* silent */ }
+
+    // Activity feed
+    try {
+      const r = await _apiGet('/user/history?limit=20');
+      if (r.ok && Array.isArray(r.data)) {
+        document.getElementById('acctEventCount').textContent = r.data.length < 20 ? r.data.length : '20+';
+        _renderActivity(r.data.slice(0, 6));
+      }
+    } catch { /* silent */ }
+  }
+
+  function _renderActivity(events) {
+    const el = document.getElementById('acctActivity');
+    if (!el) return;
+    if (!events.length) {
+      el.innerHTML = '<div class="acct-activity-empty">No activity yet.</div>';
+      return;
+    }
+    const _dotClass = type => {
+      if (type === 'login' || type === 'signup') return type;
+      if (type.includes('analys') || type.includes('backtest')) return 'analysis';
+      return '';
+    };
+    const _label = type => type.replace(/_/g, ' ');
+    const _rel = iso => {
+      const diff = Date.now() - new Date(iso);
+      const mins = Math.floor(diff / 60000);
+      if (mins < 1)   return 'just now';
+      if (mins < 60)  return mins + 'm ago';
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24)   return hrs + 'h ago';
+      return Math.floor(hrs / 24) + 'd ago';
+    };
+    el.innerHTML = events.map(e => `
+      <div class="acct-event">
+        <div class="acct-event-dot ${_dotClass(e.event_type)}"></div>
+        <div class="acct-event-type">${_label(e.event_type)}</div>
+        <div class="acct-event-time">${_rel(e.created_at)}</div>
+      </div>
+    `).join('');
   }
 
   function _showAuthPanels() {
@@ -1988,10 +2123,130 @@ const Auth = (() => {
     }
   }
 
-  return { init, openModal, closeModal, handleOverlayClick, showTab, login, signup, logout };
+  async function saveDisplayName() {
+    const input = document.getElementById('acctNameInput');
+    const msgEl = document.getElementById('acctNameMsg');
+    const btn   = document.getElementById('acctNameSave');
+    const name  = input.value.trim();
+
+    btn.disabled = true;
+    msgEl.className = 'acct-name-msg';
+    msgEl.textContent = 'Saving…';
+
+    const { ok, data } = await _apiPost('/auth/me', { display_name: name || null },  'PATCH');
+    btn.disabled = false;
+
+    if (ok && data.user) {
+      _user = data.user;
+      _updateHeaderBtn();
+      const initials = (data.user.display_name || data.user.email).slice(0, 1).toUpperCase();
+      document.getElementById('acctAvatar').textContent = initials;
+      document.getElementById('acctName').textContent   = data.user.display_name || '—';
+      msgEl.className   = 'acct-name-msg ok';
+      msgEl.textContent = 'Saved!';
+      setTimeout(() => { if (msgEl.textContent === 'Saved!') msgEl.textContent = ''; }, 2500);
+    } else {
+      msgEl.className   = 'acct-name-msg err';
+      msgEl.textContent = data.detail || 'Could not save.';
+    }
+  }
+
+  return { init, openModal, closeModal, handleOverlayClick, showTab, login, signup, logout, saveDisplayName };
 })();
 
 Auth.init();
+
+/* ═══════════════════ PREFS MODULE ═══════════════════ */
+const Prefs = (() => {
+
+  // ── apply prefs to the sidebar ─────────────────────────────────────────
+
+  function _applyToUI(prefs) {
+    if (!prefs) return;
+
+    // Profile selector
+    const profileSel = document.getElementById('profileSel');
+    if (profileSel && prefs.default_profile) profileSel.value = prefs.default_profile;
+
+    // Risk selector
+    const riskSel = document.getElementById('riskSel');
+    if (riskSel && prefs.default_risk) riskSel.value = prefs.default_risk;
+
+    // Lookback slider
+    if (prefs.lookback_years) {
+      const slider = document.getElementById('lbSlider');
+      const label  = document.getElementById('lbVal');
+      if (slider) { slider.value = prefs.lookback_years; }
+      if (label)  { label.textContent = prefs.lookback_years + ' yr'; }
+    }
+
+    // Default tickers — replace current selection
+    if (Array.isArray(prefs.default_tickers) && prefs.default_tickers.length > 0) {
+      selectedTickers = new Set(prefs.default_tickers);
+      initStockList();
+    }
+  }
+
+  // ── fetch and apply on login ───────────────────────────────────────────
+
+  async function loadAndApply() {
+    try {
+      const r = await fetch('/user/preferences', { credentials: 'include' });
+      if (!r.ok) return;
+      const prefs = await r.json();
+      _applyToUI(prefs);
+    } catch {
+      // Silent fail — app works fine with defaults
+    }
+  }
+
+  // ── save current sidebar state as defaults ─────────────────────────────
+
+  async function saveDefaults() {
+    const btn = document.getElementById('saveDefaultsBtn');
+    if (btn) { btn.classList.add('saving'); btn.textContent = 'SAVING…'; }
+
+    const payload = {
+      default_profile: document.getElementById('profileSel')?.value || undefined,
+      default_risk:    document.getElementById('riskSel')?.value    || undefined,
+      lookback_years:  +(document.getElementById('lbSlider')?.value || 5),
+      default_tickers: [...selectedTickers],
+    };
+
+    try {
+      const r = await fetch('/user/preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload),
+      });
+
+      if (btn) {
+        if (r.ok) {
+          btn.textContent = 'DEFAULTS SAVED ✓';
+          btn.style.color = 'var(--primary)';
+          setTimeout(() => {
+            btn.textContent = 'SAVE AS MY DEFAULTS';
+            btn.style.color = '';
+            btn.classList.remove('saving');
+          }, 2000);
+        } else {
+          btn.textContent = 'SAVE FAILED';
+          btn.style.color = '#f87171';
+          setTimeout(() => {
+            btn.textContent = 'SAVE AS MY DEFAULTS';
+            btn.style.color = '';
+            btn.classList.remove('saving');
+          }, 2000);
+        }
+      }
+    } catch {
+      if (btn) { btn.classList.remove('saving'); btn.textContent = 'SAVE AS MY DEFAULTS'; }
+    }
+  }
+
+  return { loadAndApply, saveDefaults };
+})();
 
 /* ═══════════════════ SAVES MODULE ═══════════════════ */
 const Saves = (() => {
@@ -2022,12 +2277,15 @@ const Saves = (() => {
     // Show all .auth-hidden elements by removing the class
     document.querySelectorAll('.auth-hidden').forEach(el => el.classList.remove('auth-hidden'));
     loadList();
+    // Apply saved preferences to the sidebar
+    Prefs.loadAndApply();
   }
 
   function onLogout() {
     // Re-hide by re-adding the class
     document.getElementById('saveBar')?.classList.add('auth-hidden');
     document.getElementById('savedPanel')?.classList.add('auth-hidden');
+    document.getElementById('saveDefaultsBtn')?.classList.add('auth-hidden');
     document.getElementById('savedList').innerHTML = '<div class="saved-empty">Log in to see your saved analyses.</div>';
   }
 
@@ -2229,10 +2487,41 @@ const Saves = (() => {
 
     <!-- ── Account panel (shown when logged in) ── -->
     <div class="auth-panel" id="panelAccount">
-      <div class="auth-user-info">
-        <div class="auth-user-email" id="accountEmail"></div>
-        <div class="auth-user-since" id="accountSince"></div>
+
+      <!-- Avatar + identity -->
+      <div class="acct-avatar" id="acctAvatar">?</div>
+      <div class="acct-name"  id="acctName"></div>
+      <div class="acct-email" id="acctEmail"></div>
+
+      <!-- Display name editor -->
+      <div class="acct-name-row">
+        <input id="acctNameInput" type="text" maxlength="100" placeholder="Display name…">
+        <button id="acctNameSave" onclick="Auth.saveDisplayName()">SAVE</button>
       </div>
+      <div class="acct-name-msg" id="acctNameMsg"></div>
+
+      <!-- Stats row -->
+      <div class="acct-stats">
+        <div class="acct-stat">
+          <div class="acct-stat-val" id="acctSavedCount">—</div>
+          <div class="acct-stat-lbl">SAVED</div>
+        </div>
+        <div class="acct-stat">
+          <div class="acct-stat-val" id="acctDaysSince">—</div>
+          <div class="acct-stat-lbl">DAYS</div>
+        </div>
+        <div class="acct-stat">
+          <div class="acct-stat-val" id="acctEventCount">—</div>
+          <div class="acct-stat-lbl">ACTIONS</div>
+        </div>
+      </div>
+
+      <!-- Recent activity -->
+      <div class="acct-section-label">Recent Activity</div>
+      <div class="acct-activity" id="acctActivity">
+        <div class="acct-activity-empty">Loading…</div>
+      </div>
+
       <button class="auth-logout-btn" onclick="Auth.logout()">LOG OUT</button>
     </div>
   </div>
