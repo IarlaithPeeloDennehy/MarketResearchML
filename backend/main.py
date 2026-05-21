@@ -57,7 +57,9 @@ limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(
     title="NUMKT ML Backend v2",
     description="Self-improving ML backend — trains on real historical returns",
-    version="2.0.0"
+    version="2.0.0",
+    docs_url=None,
+    redoc_url=None,
 )
 
 app.state.limiter = limiter
@@ -224,7 +226,7 @@ def api_status():
 
 @app.post("/analyse")
 @limiter.limit("10/minute")
-async def analyse(request: Request, req: AnalyseRequest):
+async def analyse(request: Request, req: AnalyseRequest, current_user: User = Depends(get_current_user)):
     if len(req.tickers) < 3:
         raise HTTPException(400, "Please provide at least 3 tickers.")
     if len(req.tickers) > 40:
@@ -292,7 +294,7 @@ async def analyse(request: Request, req: AnalyseRequest):
 
 @app.post("/backtest")
 @limiter.limit("3/minute")
-async def backtest(request: Request, req: BacktestRequest):
+async def backtest(request: Request, req: BacktestRequest, current_user: User = Depends(get_current_user)):
     """
     Runs walk-forward backtest AND trains the model on real returns.
     After this runs, /analyse will use the trained model automatically.

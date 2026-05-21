@@ -1268,6 +1268,8 @@ option{background:var(--bg);color:var(--text1)}
 </div>
 
 <script>
+function esc(s){const d=document.createElement('div');d.textContent=String(s??'');return d.innerHTML;}
+
 /* ================================================================
    BACKEND CONFIG
 ================================================================ */
@@ -1438,7 +1440,7 @@ function initStockList(){
     div.className='stock-item active';
     div.dataset.ticker=tk;
     const mc=s.m==='US'?'mkt-us':s.m==='UK'?'mkt-uk':'mkt-ie';
-    div.innerHTML=`<div class="si-ticker">${tk}</div><div class="si-info"><div class="si-name">${s.n}</div><div class="si-sector">${s.s} <span class="sr-mkt ${mc}" style="padding:1px 5px">${s.m}</span></div></div><button class="si-remove" data-tk="${tk}">×</button>`;
+    div.innerHTML=`<div class="si-ticker">${esc(tk)}</div><div class="si-info"><div class="si-name">${esc(s.n)}</div><div class="si-sector">${esc(s.s)} <span class="sr-mkt ${mc}" style="padding:1px 5px">${s.m}</span></div></div><button class="si-remove" data-tk="${esc(tk)}">×</button>`;
     div.querySelector('.si-remove').onclick=e=>{e.stopPropagation();selectedTickers.delete(tk);initStockList();};
     list.appendChild(div);
   });
@@ -1462,7 +1464,7 @@ function doSearch(q){
   sr.innerHTML=hits.map(s=>{
     const mc=s.m==='US'?'mkt-us':s.m==='UK'?'mkt-uk':'mkt-ie';
     const added=selectedTickers.has(s.t);
-    return`<div class="sr-item" data-tk="${s.t}" style="${added?'opacity:0.4;pointer-events:none':''}"><span class="sr-ticker">${s.t}</span><span style="flex:1;font-size:11px;color:var(--text2)">${s.n}</span><span class="sr-mkt ${mc}">${s.m}</span>${added?'<span style="font-size:9px;color:var(--text3)">added</span>':''}</div>`;
+    return`<div class="sr-item" data-tk="${esc(s.t)}" style="${added?'opacity:0.4;pointer-events:none':''}"><span class="sr-ticker">${esc(s.t)}</span><span style="flex:1;font-size:11px;color:var(--text2)">${esc(s.n)}</span><span class="sr-mkt ${mc}">${s.m}</span>${added?'<span style="font-size:9px;color:var(--text3)">added</span>':''}</div>`;
   }).join('');
   sr.style.display='block';
   sr.querySelectorAll('.sr-item:not([style*="pointer-events:none"])').forEach(el=>{el.onclick=()=>addStock(el.dataset.tk);});
@@ -1694,8 +1696,8 @@ function renderResults(R){
   if(buys.length){
     const cards=buys.slice(0,6).map(s=>`
       <div class="bb-card">
-        <div class="bb-ticker">${s.t}${s.signal==='STRONG BUY'?'<span style="font-size:8px;font-family:\'JetBrains Mono\',monospace;background:var(--green-dim);border:1px solid var(--green-border);color:var(--green);padding:2px 5px;border-radius:9999px;margin-left:6px;vertical-align:middle">STRONG</span>':''}</div>
-        <div class="bb-name">${s.n}</div>
+        <div class="bb-ticker">${esc(s.t)}${s.signal==='STRONG BUY'?'<span style="font-size:8px;font-family:\'JetBrains Mono\',monospace;background:var(--green-dim);border:1px solid var(--green-border);color:var(--green);padding:2px 5px;border-radius:9999px;margin-left:6px;vertical-align:middle">STRONG</span>':''}</div>
+        <div class="bb-name">${esc(s.n)}</div>
         <div class="bb-score-row">
           <span class="bb-score">${(s.score*100).toFixed(0)}%</span>
           <div class="bb-bar"><div class="bb-fill" style="width:${(s.score*100).toFixed(0)}%"></div></div>
@@ -1753,7 +1755,7 @@ function renderResults(R){
       const instColor=s.instPct!=null?(s.instPct>70?'var(--green)':s.instPct>40?'var(--text2)':'var(--text3)'):'var(--text3)';
       return`<div class="rec-row ${buyRow}" data-ticker="${s.t}">
         <span class="rt-ticker">${s.t} <span class="sr-mkt ${mc}" style="font-size:8px;padding:1px 4px">${s.m}</span>${s.isLive?'<span style="font-size:8px;color:var(--teal);margin-left:3px" title="Live">●</span>':''}</span>
-        <span class="rt-name">${s.n}${isBuy(s.signal)?'<span class="buy-tag">BUY</span>':''}</span>
+        <span class="rt-name">${esc(s.n)}${isBuy(s.signal)?'<span class="buy-tag">BUY</span>':''}</span>
         <span><div class="rt-num">${(s.score*100).toFixed(0)}%</div><div class="conf-bar"><div class="conf-fill" style="width:${(s.score*100).toFixed(0)}%;background:${s.score>0.65?'var(--green)':s.score>0.45?'var(--amber)':'var(--red)'}"></div></div></span>
         <span class="rt-num">${s.pe>90?'N/A':s.pe+'x'}</span>
         <span class="rt-num">${(s.roe*100).toFixed(0)}%</span>
@@ -1852,7 +1854,7 @@ function openDetail(ticker){
   document.getElementById('dpContent').innerHTML=`
     <div style="margin-bottom:1.1rem">
       <div class="dp-ticker">${s.t} <span class="sr-mkt ${mc}" style="font-size:11px;vertical-align:middle">${s.m}</span></div>
-      <div class="dp-name">${s.n} · ${s.s}</div>
+      <div class="dp-name">${esc(s.n)} · ${esc(s.s)}</div>
       <div class="dp-price">${priceStr}</div>
       <div style="margin-top:9px;display:flex;gap:7px;align-items:center;flex-wrap:wrap">
         <span class="sig-pill ${pillCls(signal)}">${signal}</span>
@@ -1909,7 +1911,7 @@ function openDetail(ticker){
         <tr><td>3M Price Return</td><td style="color:${s.m3>0?'var(--green)':'var(--red)'}">${s.m3>0?'+':''}${(s.m3*100).toFixed(0)}%</td></tr>
         <tr><td>Institutional Ownership</td><td style="color:${r&&r.instPct!=null?(r.instPct>70?'var(--green)':r.instPct<30?'var(--red)':'var(--text2)'):'var(--text3)'}">${r&&r.instPct!=null?r.instPct+'%':'—'}</td></tr>
         <tr><td>Insider Ownership</td><td style="color:${r&&r.insiderPct!=null&&r.insiderPct>10?'var(--green)':'var(--text2)'}">${r&&r.insiderPct!=null?r.insiderPct+'%':'—'}</td></tr>
-        <tr><td>Sector</td><td>${s.s}</td></tr>
+        <tr><td>Sector</td><td>${esc(s.s)}</td></tr>
         <tr><td>Market</td><td>${s.m}</td></tr>
       </table>
     </div>`;
