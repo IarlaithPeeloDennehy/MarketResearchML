@@ -332,7 +332,7 @@ async def analyse(request: Request, req: AnalyseRequest, current_user: User = De
         raise
     except Exception as e:
         logger.error(f"Analysis error: {e}", exc_info=True)
-        raise HTTPException(500, f"Model error: {str(e)}")
+        raise HTTPException(500, "Analysis failed. Check server logs for details.")
 
 
 # ── Backtest + train ───────────────────────────────────────────────────────
@@ -393,7 +393,7 @@ async def backtest(request: Request, req: BacktestRequest, current_user: User = 
         raise
     except Exception as e:
         logger.error(f"Backtest error: {e}", exc_info=True)
-        raise HTTPException(500, f"Backtest error: {str(e)}")
+        raise HTTPException(500, "Backtest failed. Check server logs for details.")
 
 
 # ── Cache endpoints ────────────────────────────────────────────────────────
@@ -453,4 +453,5 @@ async def get_stock(ticker: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(500, str(e))
+        logger.error(f"Stock fetch error ({ticker}): {e}", exc_info=True)
+        raise HTTPException(500, "Failed to fetch stock data. Check server logs for details.")
