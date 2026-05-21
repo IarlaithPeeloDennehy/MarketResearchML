@@ -57,7 +57,9 @@ limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(
     title="NUMKT ML Backend v2",
     description="Self-improving ML backend — trains on real historical returns",
-    version="2.0.0"
+    version="2.0.0",
+    docs_url=None,
+    redoc_url=None,
 )
 
 app.state.limiter = limiter
