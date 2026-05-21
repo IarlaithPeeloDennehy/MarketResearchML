@@ -10,7 +10,7 @@ Changes from v1:
   - New /cache and /model endpoints for visibility
 """
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -41,7 +41,8 @@ from ml.model import NUMKTEnsemble
 from ml.backtest import run_backtest
 from ml.scoring import score_universe
 from auth.router import router as auth_router
-from auth.models import UserSession
+from auth.dependencies import get_current_user
+from auth.models import User, UserSession
 from user.router import router as user_router
 from db.session import get_db
 from db.base import create_db_and_tables
@@ -351,7 +352,7 @@ async def backtest(request: Request, req: BacktestRequest):
 # ── Cache endpoints ────────────────────────────────────────────────────────
 
 @app.get("/cache/status")
-def cache_status():
+def cache_status(current_user: User = Depends(get_current_user)):
     """Show what price data is cached to disk."""
     return {
         "status":   "ok",
@@ -363,13 +364,13 @@ def cache_status():
     }
 
 @app.delete("/cache/data")
-def clear_data(ticker: str | None = None):
+def clear_data(ticker: str | None = None, current_user: User = Depends(get_current_user)):
     """Clear disk cache for one ticker or all."""
     clear_data_cache(ticker)
     return {"status": f"cleared {'all' if not ticker else ticker}"}
 
 @app.delete("/cache/models")
-def clear_model_cache():
+def clear_model_cache(current_user: User = Depends(get_current_user)):
     """Clear in-memory model cache (forces retrain on next /analyse)."""
     _model_cache.clear()
     return {"status": "model cache cleared"}
@@ -378,7 +379,7 @@ def clear_model_cache():
 # ── Model endpoints ────────────────────────────────────────────────────────
 
 @app.get("/model/info")
-def model_info():
+def model_info(current_user: User = Depends(get_current_user)):
     """Info about saved and in-memory models."""
     saved  = NUMKTEnsemble.list_saved()
     active = _model_cache.get("__trained__")
