@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 import logging
 import asyncio
 import os
+from pathlib import Path
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -45,7 +46,7 @@ from auth.dependencies import get_current_user
 from auth.models import User, UserSession
 from user.router import router as user_router
 from db.session import get_db
-from db.base import create_db_and_tables
+from db.base import engine
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -122,14 +123,58 @@ _data_cache:  dict = {}   # "latest" -> raw_data, features_df
 
 
 # ── Load any previously trained models on startup ─────────────────────────
+def _run_migrations() -> None:
+    """Run alembic upgrade head programmatically.
+
+    Handles the case where tables were previously created via SQLModel
+    create_all (no alembic_version table) by stamping the DB at the
+    current head before attempting to apply migrations.
+    """
+    if engine is None:
+        return
+
+    from alembic.config import Config as AlembicConfig
+    from alembic import command as alembic_command
+    from alembic.runtime.migration import MigrationContext
+    import sqlalchemy as _sa
+
+    _base = Path(__file__).parent
+    cfg = AlembicConfig(str(_base / "alembic.ini"))
+    cfg.set_main_option("script_location", str(_base / "alembic"))
+
+    with engine.connect() as conn:
+        # If tables exist but alembic_version does not, the DB was bootstrapped
+        # via SQLModel create_all and has never been under Alembic control.
+        # Stamp it at head so upgrade head becomes a no-op instead of crashing
+        # with "relation already exists".
+        has_version_table = _sa.inspect(conn).has_table("alembic_version")
+        if not has_version_table:
+            has_app_tables = _sa.inspect(conn).has_table("users")
+            if has_app_tables:
+                logger.warning(
+                    "Database has app tables but no alembic_version — "
+                    "stamping at head revision without re-running migrations"
+                )
+                alembic_command.stamp(cfg, "head")
+                return
+
+        ctx = MigrationContext.configure(conn)
+        current = ctx.get_current_revision()
+
+    alembic_command.upgrade(cfg, "head")
+    logger.info(f"Migrations applied (was at revision: {current or 'none'})")
+
+
 @app.on_event("startup")
 async def startup():
-    # ── Create tables (fallback if alembic didn't run) ────────────────────
-    try:
-        create_db_and_tables()
-        logger.info("Database tables verified/created")
-    except Exception as exc:
-        logger.warning(f"Table creation skipped: {exc}")
+    # ── Run database migrations ────────────────────────────────────────────
+    if engine is not None:
+        try:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, _run_migrations)
+        except Exception as exc:
+            logger.error(f"Database migration failed: {exc}", exc_info=True)
+            raise RuntimeError("Startup aborted — database migration failed") from exc
 
     # ── Prune stale sessions ───────────────────────────────────────────────
     try:
