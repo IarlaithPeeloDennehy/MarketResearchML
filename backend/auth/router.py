@@ -65,9 +65,23 @@ def _set_session_cookie(response: Response, token: str, remember_me: bool, reque
     )
 
 
+def _get_client_ip(request: Request) -> str | None:
+    """Return the client IP from X-Forwarded-For (first entry only) or the
+    direct connection address. Capped at 45 chars to cover the longest valid
+    IPv6 address and prevent forged headers from writing junk to the database."""
+    header = request.headers.get("x-forwarded-for")
+    if header:
+        ip = header.split(",")[0].strip()
+    elif request.client:
+        ip = request.client.host
+    else:
+        return None
+    return ip[:45]
+
+
 def _log_event(db: Session, user_id: str, event_type: str,
                request: Request, payload: Optional[dict] = None):
-    ip = request.headers.get("x-forwarded-for", request.client.host if request.client else None)
+    ip = _get_client_ip(request)
     db.add(ActivityEvent(
         user_id=user_id,
         event_type=event_type,
@@ -151,7 +165,7 @@ def signup(
         user_id=user.id,
         token_hash=hash_token(token),
         expires_at=token_expiry(remember_me=False),
-        ip_address=request.headers.get("x-forwarded-for", request.client.host if request.client else None),
+        ip_address=_get_client_ip(request),
         user_agent=request.headers.get("user-agent"),
     ))
 
@@ -194,7 +208,7 @@ def login(
         user_id=user.id,
         token_hash=hash_token(token),
         expires_at=token_expiry(body.remember_me),
-        ip_address=request.headers.get("x-forwarded-for", request.client.host if request.client else None),
+        ip_address=_get_client_ip(request),
         user_agent=request.headers.get("user-agent"),
     ))
 
