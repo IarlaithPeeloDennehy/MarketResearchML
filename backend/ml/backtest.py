@@ -79,6 +79,7 @@ def run_backtest(
     rebalance_months: int  = 3,
     train_model:      bool = True,   # if True, trains model on real returns
     model_name:       str  = "default",
+    cost_bps:         int  = 30,     # round-trip transaction cost in basis points
 ) -> dict:
     """
     Walk-forward backtest.
@@ -143,9 +144,10 @@ def run_backtest(
     bench_ret_by_period: dict[int, float] = {}
     period_ics        = []
     period_hit_rates  = []
-    portfolio_returns = []
-    benchmark_returns = []
-    turnovers         = []
+    portfolio_returns       = []   # net of transaction costs
+    portfolio_returns_gross = []   # before transaction costs
+    benchmark_returns       = []
+    turnovers               = []
 
     # Training periods (period < train_cutoff)
     all_feature_rows    = []
@@ -188,8 +190,8 @@ def run_backtest(
             # RSI-14 (Wilder's EMA)
             if len(p) > 15:
                 d    = p.diff().dropna()
-                gain = d.clip(lower=0).ewm(span=14, adjust=False).mean().iloc[-1]
-                loss = (-d.clip(upper=0)).ewm(span=14, adjust=False).mean().iloc[-1]
+                gain = d.clip(lower=0).ewm(alpha=1/14, adjust=False).mean().iloc[-1]
+                loss = (-d.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean().iloc[-1]
                 snap["rsi_14"] = float(100-100/(1+gain/(loss+1e-9)))
             else:
                 snap["rsi_14"] = 50.0
@@ -426,12 +428,21 @@ def run_backtest(
                         )
 
                     # Top-quintile portfolio
-                    n_top   = max(1, len(grp) // 5)
-                    top_grp = grp.nlargest(n_top, "ml_score")
-                    portfolio_returns.append(float(top_grp["actual_return"].mean()))
+                    n_top     = max(1, len(grp) // 5)
+                    top_grp   = grp.nlargest(n_top, "ml_score")
+                    curr_set  = set(top_grp["ticker"].tolist())
+                    gross_ret = float(top_grp["actual_return"].mean())
+
+                    # Transaction cost: deduct cost_bps for each new entry
+                    new_entries   = curr_set - prev_top_set if prev_top_set else curr_set
+                    turnover_frac = len(new_entries) / max(len(curr_set), 1)
+                    cost_drag     = turnover_frac * cost_bps / 10_000
+                    net_ret       = gross_ret - cost_drag
+
+                    portfolio_returns_gross.append(gross_ret)
+                    portfolio_returns.append(net_ret)
 
                     # Turnover
-                    curr_set = set(top_grp["ticker"].tolist())
                     if prev_top_set:
                         turnovers.append(
                             1 - len(curr_set & prev_top_set) / max(len(curr_set), 1)
@@ -484,16 +495,19 @@ def run_backtest(
         result["training"] = training_info
         return result
 
-    pa = np.array(portfolio_returns)
-    ba = np.array(benchmark_returns)
-    ppy = 12 / rebalance_months
+    pa       = np.array(portfolio_returns)        # net of costs
+    pa_gross = np.array(portfolio_returns_gross)   # before costs
+    ba       = np.array(benchmark_returns)
+    ppy      = 12 / rebalance_months
 
-    ann_port  = float((np.prod(1 + pa) ** (ppy / len(pa))) - 1)
-    ann_bench = float((np.prod(1 + ba) ** (ppy / len(ba))) - 1)
-    ann_alpha = ann_port - ann_bench
+    ann_port       = float((np.prod(1 + pa_gross) ** (ppy / len(pa_gross))) - 1)
+    ann_port_net   = float((np.prod(1 + pa)       ** (ppy / len(pa)))       - 1)
+    ann_bench      = float((np.prod(1 + ba)       ** (ppy / len(ba)))       - 1)
+    ann_alpha      = ann_port     - ann_bench
+    ann_alpha_net  = ann_port_net - ann_bench
 
     rf     = 0.045 / ppy
-    exc_rf = pa - rf
+    exc_rf = pa - rf   # Sharpe on net returns (after costs)
     sharpe = float(np.mean(exc_rf)/(np.std(exc_rf)+1e-9)*np.sqrt(ppy))
 
     cum    = np.cumprod(1+pa)
@@ -514,15 +528,19 @@ def run_backtest(
 
     logger.info(
         f"BACKTEST COMPLETE | periods={len(pa)} | IC={ic_mean:.4f} | "
-        f"Sharpe={sharpe:.3f} | Hit={hit_rate:.1%} | Alpha={ann_alpha:.2%}"
+        f"Sharpe={sharpe:.3f} | Hit={hit_rate:.1%} | "
+        f"Alpha gross={ann_alpha:.2%}, net={ann_alpha_net:.2%} ({cost_bps}bps)"
     )
 
     return {
         "n_periods":            len(pa),
         "forward_months":       forward_months,
         "ann_portfolio_return": round(ann_port*100, 2),
+        "ann_portfolio_net":    round(ann_port_net*100, 2),
         "ann_benchmark_return": round(ann_bench*100, 2),
         "ann_alpha":            round(ann_alpha*100, 2),
+        "ann_alpha_net":        round(ann_alpha_net*100, 2),
+        "cost_bps":             cost_bps,
         "sharpe_ratio":         round(sharpe, 3),
         "max_drawdown":         round(max_dd*100, 2),
         "calmar_ratio":         round(calmar, 3),
@@ -532,7 +550,7 @@ def run_backtest(
         "icir":                 round(icir, 3),
         "beta_vs_benchmark":    round(beta, 3),
         "avg_monthly_turnover": round(avg_turn*100, 1),
-        "interpretation":       _interpret(hit_rate, ic_mean, sharpe, max_dd, ann_alpha),
+        "interpretation":       _interpret(hit_rate, ic_mean, sharpe, max_dd, ann_alpha_net),
         "training":             training_info,
     }
 

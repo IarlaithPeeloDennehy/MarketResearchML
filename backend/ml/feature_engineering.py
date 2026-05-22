@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 # Features used as model inputs (must match what model.py expects)
 FEATURE_COLS = [
     "pe_ratio",
+    "forward_pe",
     "pb_ratio",
     "roe",
     "net_margin",
@@ -126,6 +127,7 @@ def extract_snapshot_features(stock_data: dict) -> dict:
         "last_price":      _safe(stock_data.get("last_price")),
         # --- Valuation ---
         "pe_ratio":        _safe(stock_data.get("pe") or (info.get("trailingPE"))),
+        "forward_pe":      _safe(stock_data.get("forward_pe") or (info.get("forwardPE"))),
         "pb_ratio":        _safe(stock_data.get("pb") or (info.get("priceToBook"))),
         # --- Profitability ---
         "roe":             _safe(stock_data.get("roe") or (info.get("returnOnEquity"))),

@@ -1631,7 +1631,7 @@ async function runAnalysis(){
   if(backendResults&&backendResults.results&&backendResults.results.length){
     scored=backendResults.results.map(br=>{
       const local=ALL_STOCKS.find(s=>s.t===br.ticker)||{};
-      return{...local,t:br.ticker,n:br.name||local.n||br.ticker,s:br.sector||local.s||'Unknown',m:br.market||local.m||'US',p:br.last_price||local.p||0,score:br.composite_score/100,fundScore:br.fundamental_score/100,instPct:br.inst_ownership_pct,insiderPct:br.insider_ownership_pct,ff:mapFactorProfile(br.factor_profile),signal:br.signal,buyReasons:br.buy_reasons||[],pe:br.fundamentals?.pe_ratio||local.pe,roe:br.fundamentals?.roe!=null?br.fundamentals.roe/100:local.roe,mg:br.fundamentals?.net_margin!=null?br.fundamentals.net_margin/100:local.mg,de:br.fundamentals?.debt_equity||local.de,dy:br.fundamentals?.dividend_yield!=null?br.fundamentals.dividend_yield/100:local.dy,rg:br.fundamentals?.revenue_growth!=null?br.fundamentals.revenue_growth/100:local.rg,m12:br.fundamentals?.mom_12m!=null?br.fundamentals.mom_12m/100:local.m12,beta:br.fundamentals?.beta||local.beta,mc:br.market_cap_bn||local.mc,isLive:true};
+      return{...local,t:br.ticker,n:br.name||local.n||br.ticker,s:br.sector||local.s||'Unknown',m:br.market||local.m||'US',p:br.last_price||local.p||0,score:br.composite_score/100,fundScore:br.fundamental_score/100,instPct:br.inst_ownership_pct,insiderPct:br.insider_ownership_pct,ff:mapFactorProfile(br.factor_profile),signal:br.signal,buyReasons:br.buy_reasons||[],pe:br.fundamentals?.pe_ratio||local.pe,roe:br.fundamentals?.roe!=null?br.fundamentals.roe/100:local.roe,mg:br.fundamentals?.net_margin!=null?br.fundamentals.net_margin/100:local.mg,de:br.fundamentals?.debt_equity||local.de,dy:br.fundamentals?.dividend_yield!=null?br.fundamentals.dividend_yield/100:local.dy,rg:br.fundamentals?.revenue_growth!=null?br.fundamentals.revenue_growth/100:local.rg,m12:br.fundamentals?.mom_12m!=null?br.fundamentals.mom_12m/100:local.m12,beta:br.fundamentals?.beta||local.beta,betaNote:br.beta_note||null,mc:br.market_cap_bn||local.mc,isLive:true};
     });
   } else {
     scored=computeScores(selArr,profile,riskKey,lambda,useFF5);
@@ -1902,7 +1902,7 @@ function openDetail(ticker){
         <tr><td>Revenue Growth (YoY)</td><td>${(s.rg*100).toFixed(0)}%</td></tr>
         <tr><td>Debt / Equity</td><td>${s.de.toFixed(2)}x</td></tr>
         <tr><td>Dividend Yield</td><td>${(s.dy*100).toFixed(1)}%</td></tr>
-        <tr><td>Beta</td><td>${s.beta.toFixed(2)}</td></tr>
+        <tr><td>Beta</td><td>${s.beta.toFixed(2)}${r&&r.betaNote?`<span style="font-size:10px;color:var(--text3);margin-left:6px">⚠ ${esc(r.betaNote)}</span>`:''}</td></tr>
         <tr><td>12M Price Return</td><td style="color:${s.m12>0?'var(--green)':'var(--red)'}">${s.m12>0?'+':''}${(s.m12*100).toFixed(0)}%</td></tr>
         <tr><td>3M Price Return</td><td style="color:${s.m3>0?'var(--green)':'var(--red)'}">${s.m3>0?'+':''}${(s.m3*100).toFixed(0)}%</td></tr>
         <tr><td>Institutional Ownership</td><td style="color:${r&&r.instPct!=null?(r.instPct>70?'var(--green)':r.instPct<30?'var(--red)':'var(--text2)'):'var(--text3)'}">${r&&r.instPct!=null?r.instPct+'%':'—'}</td></tr>
@@ -1983,11 +1983,11 @@ async function runBacktest(){
       <div class="bt-metric"><div class="bt-lbl">Info. Coeff.</div><div class="bt-val" style="color:${metricColor(m.ic_mean,0.10,0.05)}">${m.ic_mean!=null?m.ic_mean.toFixed(3):'—'}</div><div class="bt-interp">${m.interpretation?.ic||''}</div></div>
       <div class="bt-metric"><div class="bt-lbl">IC IR</div><div class="bt-val" style="color:${metricColor(m.icir,0.5,0.2)}">${m.icir!=null?m.icir.toFixed(2):'—'}</div><div class="bt-interp">IC consistency</div></div>
       <div class="bt-metric"><div class="bt-lbl">Sharpe Ratio</div><div class="bt-val" style="color:${metricColor(m.sharpe_ratio,1,0)}">${m.sharpe_ratio!=null?m.sharpe_ratio.toFixed(2):'—'}</div><div class="bt-interp">${m.interpretation?.sharpe||''}</div></div>
-      <div class="bt-metric"><div class="bt-lbl">Ann. Alpha</div><div class="bt-val" style="color:${m.ann_alpha>0?'var(--green)':'var(--red)'}">${m.ann_alpha!=null?(m.ann_alpha>0?'+':'')+m.ann_alpha+'%':'—'}</div><div class="bt-interp">vs equal-weight</div></div>
+      <div class="bt-metric"><div class="bt-lbl">Ann. Alpha (net)</div><div class="bt-val" style="color:${(m.ann_alpha_net??m.ann_alpha)>0?'var(--green)':'var(--red)'}">${(m.ann_alpha_net??m.ann_alpha)!=null?(((m.ann_alpha_net??m.ann_alpha)>0?'+':'')+(m.ann_alpha_net??m.ann_alpha)+'%'):'—'}</div><div class="bt-interp">gross ${m.ann_alpha!=null?((m.ann_alpha>0?'+':'')+m.ann_alpha+'%'):'—'} · ${m.cost_bps??30}bps costs</div></div>
       <div class="bt-metric"><div class="bt-lbl">Max Drawdown</div><div class="bt-val" style="color:${metricColor(m.max_drawdown,-10,-20)}">${m.max_drawdown!=null?m.max_drawdown+'%':'—'}</div><div class="bt-interp">${m.interpretation?.drawdown||''}</div></div>
       <div class="bt-metric"><div class="bt-lbl">Calmar Ratio</div><div class="bt-val" style="color:${metricColor(m.calmar_ratio,1,0.5)}">${m.calmar_ratio!=null?m.calmar_ratio.toFixed(2):'—'}</div><div class="bt-interp">Return / drawdown</div></div>
       <div class="bt-metric"><div class="bt-lbl">Beta</div><div class="bt-val">${m.beta_vs_benchmark!=null?m.beta_vs_benchmark.toFixed(2):'—'}</div><div class="bt-interp">vs benchmark</div></div>
-      <div class="bt-metric"><div class="bt-lbl">Ann. Portfolio</div><div class="bt-val" style="color:${m.ann_portfolio_return>0?'var(--green)':'var(--red)'}">${m.ann_portfolio_return!=null?(m.ann_portfolio_return>0?'+':'')+m.ann_portfolio_return+'%':'—'}</div><div class="bt-interp">top-quintile</div></div>
+      <div class="bt-metric"><div class="bt-lbl">Ann. Portfolio (net)</div><div class="bt-val" style="color:${(m.ann_portfolio_net??m.ann_portfolio_return)>0?'var(--green)':'var(--red)'}">${(m.ann_portfolio_net??m.ann_portfolio_return)!=null?(((m.ann_portfolio_net??m.ann_portfolio_return)>0?'+':'')+(m.ann_portfolio_net??m.ann_portfolio_return)+'%'):'—'}</div><div class="bt-interp">gross ${m.ann_portfolio_return!=null?((m.ann_portfolio_return>0?'+':'')+m.ann_portfolio_return+'%'):'—'} · top-quintile</div></div>
     </div>
     ${buildPeriodExamples(m.training?.period_examples)}`;
 }
