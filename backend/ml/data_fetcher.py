@@ -244,13 +244,17 @@ async def fetch_stock_data(ticker: str, lookback_years: int = 5) -> dict | None:
     }
 
 
-async def fetch_multiple_stocks(tickers: list[str], lookback_years: int = 5) -> dict:
+async def fetch_multiple_stocks(
+    tickers: list[str], lookback_years: int = 5
+) -> tuple[dict, int]:
+    """Return (data_dict, uncached_count) where uncached_count is how many tickers
+    required a fresh fetch from Yahoo Finance (0 means fully served from disk cache)."""
     out = {}
     uncached_count = 0
 
     for ticker in tickers:
         price_path = _price_cache_path(ticker)
-        
+
         # Load cached data if it exists and is fresh
         if _cache_is_fresh(price_path):
             cached = _load_cached_prices(ticker)
@@ -283,7 +287,7 @@ async def fetch_multiple_stocks(tickers: list[str], lookback_years: int = 5) -> 
 
     logger.info(f"Fetched {len(out)}/{len(tickers)} tickers "
                 f"({uncached_count} from Yahoo, {len(out)-uncached_count} from cache)")
-    return out
+    return out, uncached_count
 
 
 def get_cache_status() -> dict:

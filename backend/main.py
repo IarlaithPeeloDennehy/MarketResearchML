@@ -121,6 +121,48 @@ app.include_router(user_router)
 _model_cache: dict = {}   # profile_risk_lookback -> NUMKTEnsemble
 _data_cache:  dict = {}   # "latest" -> raw_data, features_df
 
+# ── Background retraining ──────────────────────────────────────────────────
+_last_retrain: float = 0.0          # Unix timestamp of last background retrain
+_RETRAIN_COOLDOWN    = 3600         # seconds — don't retrain more than once per hour
+
+
+async def _background_retrain(raw_data: dict, features_df) -> None:
+    """Retrain and save the model in the background after new data is fetched.
+
+    Runs in an asyncio task so it never delays the /analyse response.
+    Failures are logged but swallowed — the caller's result is unaffected.
+    """
+    global _last_retrain
+    try:
+        logger.info("Background retrain: starting model update with newly fetched data")
+        loop = asyncio.get_event_loop()
+        metrics = await loop.run_in_executor(
+            None,
+            lambda: run_backtest(
+                features_df=features_df,
+                raw_data=raw_data,
+                profile="quality",
+                forward_months=12,
+                rebalance_months=3,
+                train_model=True,
+                model_name="default",
+            ),
+        )
+        if metrics.get("training", {}).get("trained"):
+            trained_model = NUMKTEnsemble.load("default")
+            if trained_model:
+                _model_cache["__trained__"] = trained_model
+                _last_retrain = datetime.now(timezone.utc).timestamp()
+                logger.info(
+                    f"Background retrain complete — model updated "
+                    f"({trained_model.n_training_rows} rows, "
+                    f"CV={trained_model.cv_accuracy:.3f})"
+                )
+        else:
+            logger.warning("Background retrain: run_backtest returned no trained model")
+    except Exception as exc:
+        logger.error(f"Background retrain failed (non-fatal): {exc}", exc_info=True)
+
 
 # ── Load any previously trained models on startup ─────────────────────────
 def _run_migrations() -> None:
@@ -191,6 +233,15 @@ async def startup():
                 logger.info(f"Pruned {len(stale)} expired/revoked session(s)")
     except Exception as exc:
         logger.warning(f"Session pruning skipped (DB may not be ready): {exc}")
+
+    # ── Warn when cache directory is not persistent ────────────────────────
+    if not os.environ.get("CACHE_DIR"):
+        logger.warning(
+            "CACHE_DIR is not set — trained models and price cache are stored in the "
+            "container's local filesystem and will be lost on every restart or redeploy. "
+            "Mount a persistent disk on Render and set CACHE_DIR to its path to retain "
+            "learning between deploys."
+        )
 
     # ── Load saved ML model ────────────────────────────────────────────────
     saved = NUMKTEnsemble.list_saved()
@@ -280,7 +331,7 @@ async def analyse(request: Request, req: AnalyseRequest, current_user: User = De
     logger.info(f"Analyse: {req.tickers} | profile={req.profile}")
 
     try:
-        raw_data = await fetch_multiple_stocks(req.tickers, req.lookback_years+1)
+        raw_data, uncached_count = await fetch_multiple_stocks(req.tickers, req.lookback_years+1)
         if not raw_data:
             raise HTTPException(502, "Could not fetch data for any tickers.")
 
@@ -314,6 +365,15 @@ async def analyse(request: Request, req: AnalyseRequest, current_user: User = De
         # Cache for backtest
         _data_cache["latest"]           = raw_data
         _data_cache["latest_features"]  = features_df
+
+        # Trigger background retraining when new data was fetched from Yahoo
+        # and the cooldown has elapsed — runs after the response is returned
+        now_ts = datetime.now(timezone.utc).timestamp()
+        if uncached_count > 0 and (now_ts - _last_retrain) > _RETRAIN_COOLDOWN:
+            asyncio.create_task(_background_retrain(raw_data, features_df))
+            logger.info(
+                f"Background retrain queued ({uncached_count} new ticker(s) fetched)"
+            )
 
         return {
             "status":             "ok",
@@ -357,7 +417,7 @@ async def backtest(request: Request, req: BacktestRequest, current_user: User = 
             features_df = _data_cache["latest_features"]
         else:
             logger.info("No cache — fetching fresh data")
-            raw_data = await fetch_multiple_stocks(req.tickers, req.lookback_years+1)
+            raw_data, _ = await fetch_multiple_stocks(req.tickers, req.lookback_years+1)
             if not raw_data:
                 raise HTTPException(502, "Could not fetch backtest data.")
             features_df = build_features(raw_data, profile=req.profile)
