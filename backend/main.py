@@ -156,7 +156,7 @@ async def _background_retrain(raw_data: dict, features_df) -> None:
                 logger.info(
                     f"Background retrain complete — model updated "
                     f"({trained_model.n_training_rows} rows, "
-                    f"CV={trained_model.cv_accuracy:.3f})"
+                    f"IC={trained_model.cv_ic:.4f}, acc={trained_model.cv_accuracy:.3f})"
                 )
         else:
             logger.warning("Background retrain: run_backtest returned no trained model")
@@ -250,7 +250,7 @@ async def startup():
         for m in saved:
             logger.info(f"  {m['name']} — trained {m['trained_at']} "
                         f"on {m['n_training_rows']} rows ({m['training_source']}) "
-                        f"CV={m['cv_accuracy']:.3f}")
+                        f"IC={m.get('cv_ic', 0):.4f}, acc={m['cv_accuracy']:.3f}")
         model = NUMKTEnsemble.load("default")
         if model:
             _model_cache["__trained__"] = model
@@ -381,6 +381,7 @@ async def analyse(request: Request, req: AnalyseRequest, current_user: User = De
             "profile":            req.profile,
             "risk":               req.risk,
             "cv_folds":           req.cv_folds,
+            "cv_ic":              round(model.cv_ic, 4),
             "cv_accuracy":        round(model.cv_accuracy, 4),
             "training_source":    model.training_source,
             "n_training_rows":    model.n_training_rows,
