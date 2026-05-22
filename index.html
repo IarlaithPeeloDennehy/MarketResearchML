@@ -1602,7 +1602,7 @@ async function runAnalysis(){
 
   stepsEl.innerHTML=steps.map((s,i)=>`<div class="ls" id="ls${i}"><div class="ls-dot"></div>${s}</div>`).join('');
 
-  let backendResults=null,cvAccuracy=null,featureImportance=null;
+  let backendResults=null,cvAccuracy=null,cvIC=null,featureImportance=null;
 
   if(backendLive){
     document.getElementById('ls0').className='ls active';
@@ -1616,7 +1616,7 @@ async function runAnalysis(){
       await new Promise(r=>setTimeout(r,280+Math.random()*200));
     }
     document.getElementById(`ls${steps.length-1}`).className='ls done';
-    if(backendResults){cvAccuracy=backendResults.cv_accuracy;featureImportance=backendResults.feature_importance;}
+    if(backendResults){cvAccuracy=backendResults.cv_accuracy;cvIC=backendResults.cv_ic??null;featureImportance=backendResults.feature_importance;}
   } else {
     for(let i=0;i<steps.length;i++){
       if(i>0)document.getElementById(`ls${i-1}`).className='ls done';
@@ -1639,7 +1639,7 @@ async function runAnalysis(){
     scored.forEach(s=>{s.signal=getSignal(s.score);s.buyReasons=isBuy(s.signal)?buildBuyReasons(s,profile):buildSellReasons(s,profile);s.isLive=false;});
   }
 
-  runResults={scored,profileKey,riskKey,profile,useFF5,folds,lambda,cvAccuracy,featureImportance,backendLive};
+  runResults={scored,profileKey,riskKey,profile,useFF5,folds,lambda,cvAccuracy,cvIC,featureImportance,backendLive};
   overlay.style.display='none';
   renderResults(runResults);
 }
@@ -1659,7 +1659,7 @@ function updateBackendBadge(live){
 }
 
 function renderResults(R){
-  const{scored,profileKey,riskKey,profile,useFF5,folds,lambda}=R;
+  const{scored,profileKey,riskKey,profile,useFF5,folds,lambda,cvIC}=R;
   document.getElementById('welcomeScreen').style.display='none';
   document.getElementById('resultsScreen').style.display='block';
   // Saved-analyses panel belongs on the welcome screen, not above results
@@ -1678,14 +1678,15 @@ function renderResults(R){
   const sells=scored.filter(s=>s.signal==='SELL');
   const avgS=(scored.reduce((a,b)=>a+b.score,0)/scored.length*100).toFixed(0);
   const top=scored[0];
-  const cvAcc=R.cvAccuracy!=null?(R.cvAccuracy*100).toFixed(1):(66+Math.random()*12).toFixed(1);
+  const cvAcc=R.cvAccuracy!=null?(R.cvAccuracy*100).toFixed(1):null;
+  const cvICVal=cvIC!=null?cvIC.toFixed(4):null;
   const mkts=[...new Set(scored.map(s=>s.m))].join(' / ');
 
   document.getElementById('summaryGrid').innerHTML=`
     <div class="metric-card hl animate-in"><div class="mc-label">Top Pick</div><div class="mc-val">${top.t}</div><div class="mc-sub">${top.signal} · ${(top.score*100).toFixed(0)}%</div></div>
     <div class="metric-card hl-green animate-in delay-1"><div class="mc-label">BUY Signals</div><div class="mc-val">${buys.length}</div><div class="mc-sub">${buys.slice(0,3).map(s=>s.t).join(', ')}</div></div>
     <div class="metric-card animate-in delay-2"><div class="mc-label">HOLD</div><div class="mc-val">${holds.length}</div><div class="mc-sub">of ${scored.length} stocks · ${mkts}</div></div>
-    <div class="metric-card animate-in delay-3"><div class="mc-label">CV Accuracy</div><div class="mc-val">${cvAcc}%</div><div class="mc-sub">${folds}-fold · λ=${lambda.toFixed(2)}</div></div>
+    <div class="metric-card animate-in delay-3"><div class="mc-label">Model IC</div><div class="mc-val">${cvICVal??'—'}</div><div class="mc-sub">${cvAcc!=null?`acc ${cvAcc}% · `:''}${folds}-fold · λ=${lambda.toFixed(2)}</div></div>
     <div class="metric-card animate-in delay-4"><div class="mc-label">Avg Confidence</div><div class="mc-val">${avgS}%</div><div class="mc-sub">${profile.l}</div></div>`;
 
   const bb=document.getElementById('buyBannerSlot');
@@ -2676,6 +2677,7 @@ const Saves = (() => {
           isLive: s.isLive,
         })),
         cvAccuracy:        runResults.cvAccuracy,
+        cvIC:              runResults.cvIC,
         featureImportance: runResults.featureImportance,
         backendLive:       runResults.backendLive,
         profileKey:        runResults.profileKey,
@@ -2774,6 +2776,7 @@ const Saves = (() => {
         folds:             res.folds  || 5,
         lambda:            res.lambda || 0.10,
         cvAccuracy:        res.cvAccuracy        || null,
+        cvIC:              res.cvIC              ?? null,
         featureImportance: res.featureImportance || {},
         backendLive:       false,
       };
