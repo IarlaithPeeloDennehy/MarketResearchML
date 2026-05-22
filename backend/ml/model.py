@@ -368,10 +368,15 @@ class NUMKTEnsemble:
 
         self._run_cv_and_fit(X, y, groups=groups)
 
-        # IC from OOF predictions — genuinely out-of-sample
+        # IC from OOF predictions — exclude uncovered rows (zeros from t_start=0
+        # and current-snapshot sentinel) to avoid diluting the IC with artifacts.
         if self._oof_proba is not None and len(self._oof_proba) == len(fwd_arr):
-            ic, _ = spearmanr(self._oof_proba, fwd_arr)
-            self.cv_ic = float(ic) if np.isfinite(ic) else 0.0
+            covered = self._oof_proba > 1e-9
+            if covered.sum() >= 10:
+                ic, _ = spearmanr(self._oof_proba[covered], fwd_arr[covered])
+                self.cv_ic = float(ic) if np.isfinite(ic) else 0.0
+            else:
+                self.cv_ic = 0.0
         else:
             self.cv_ic = 0.0
 
@@ -732,22 +737,29 @@ class NUMKTEnsemble:
         side of every fold boundary, preventing cross-sectional leakage where
         AAPL at period 7 (train) and MSFT at period 7 (test) would share the
         same market regime.
+
+        Current-snapshot rows are tagged with _time_idx=999_999 and excluded
+        from all folds — they're always in the final .fit() only.
+        All other historical periods from unique_periods[1] onward are covered
+        by exactly one test fold so that cross_val_predict never leaves gaps.
         """
-        unique_periods = sorted(np.unique(groups))
+        # Exclude the current-snapshot sentinel (never a valid test period)
+        unique_periods = sorted(p for p in np.unique(groups) if p != 999_999)
         n = len(unique_periods)
-        n_splits = min(n_splits, max(2, n - 1))
-        step = max(1, n // (n_splits + 1))
-        for k in range(1, n_splits + 1):
-            test_end  = min(n, k * step + step)
-            train_end = test_end - step
-            if train_end <= 0:
-                continue
-            train_pds = unique_periods[:train_end]
-            test_pds  = unique_periods[train_end:test_end]
-            if not test_pds:
+        if n < 2:
+            return
+        n_splits = min(n_splits, n - 1)
+        # Distribute all periods after the first into n_splits test chunks.
+        # This guarantees every historical period is in exactly one test fold,
+        # preventing the zero-fill artifact that distorts threshold calibration.
+        test_chunks = [list(c) for c in np.array_split(unique_periods[1:], n_splits) if len(c)]
+        for chunk in test_chunks:
+            first_test = chunk[0]
+            train_pds  = [p for p in unique_periods if p < first_test]
+            if not train_pds:
                 continue
             train_idx = np.where(np.isin(groups, train_pds))[0]
-            test_idx  = np.where(np.isin(groups, test_pds))[0]
+            test_idx  = np.where(np.isin(groups, chunk))[0]
             if len(train_idx) > 0 and len(test_idx) > 0:
                 yield train_idx, test_idx
 
@@ -785,15 +797,21 @@ class NUMKTEnsemble:
             self.cv_accuracy = float(np.mean(oof_class == y))
             logger.info(f"OOF CV accuracy (ensemble): {self.cv_accuracy:.3f}")
 
-            # Calibrate signal thresholds from OOF probability distribution
-            if len(self._oof_proba) >= 10:
+            # Calibrate signal thresholds from OOF probability distribution.
+            # Filter out the 0.0 sentinel values left by cross_val_predict for
+            # current-snapshot rows (999_999) which are never in any test fold.
+            # True RF+GB predictions with balanced class weights are never
+            # exactly 0.0 in practice, so this filter is safe.
+            covered_proba = self._oof_proba[self._oof_proba > 1e-9]
+            if len(covered_proba) >= 10:
                 self._signal_thresholds = {
-                    "strong_buy": float(np.percentile(self._oof_proba, 80)),
-                    "buy":        float(np.percentile(self._oof_proba, 55)),
-                    "hold":       float(np.percentile(self._oof_proba, 30)),
+                    "strong_buy": float(np.percentile(covered_proba, 80)),
+                    "buy":        float(np.percentile(covered_proba, 55)),
+                    "hold":       float(np.percentile(covered_proba, 30)),
                 }
                 logger.info(
-                    f"Signal thresholds calibrated from OOF dist — "
+                    f"Signal thresholds calibrated from {len(covered_proba)} "
+                    f"covered OOF predictions — "
                     f"STRONG BUY>{self._signal_thresholds['strong_buy']:.3f}, "
                     f"BUY>{self._signal_thresholds['buy']:.3f}, "
                     f"HOLD>{self._signal_thresholds['hold']:.3f}"
