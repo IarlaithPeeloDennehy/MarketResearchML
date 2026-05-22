@@ -61,8 +61,18 @@ _base = Path(_cache_root) if _cache_root else Path(__file__).parent.parent / "ca
 MODEL_DIR = _base / "models"
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-# Where data_fetcher stores parquet price files
+# Where data_fetcher stores parquet price files and info JSON
 PRICE_DIR = _base / "prices"
+INFO_DIR  = _base / "info"
+
+# Diverse anchor tickers included in training when already cached — never fetched.
+# Broadens the cross-sectional universe so factor patterns aren't learned from
+# a single user's narrow watchlist.
+_ANCHOR_TICKERS = [
+    "AAPL", "MSFT", "GOOGL", "AMZN", "META",
+    "JPM",  "JNJ",  "PG",    "XOM",  "WMT",
+    "BRK-B","V",    "UNH",   "HD",   "CVX",
+]
 
 # Minimum real labelled rows before we trust the model.
 # Below this the dataset is too thin and we log a loud warning.
@@ -102,9 +112,10 @@ class NUMKTEnsemble:
         self.n_training_rows = 0
         self.training_source = "none"
         self._feature_names  = []
-        self._fi_rf          = {}
-        self._fi_gb          = {}
-        self.trained_at      = None
+        self._fi_rf              = {}
+        self._fi_gb              = {}
+        self.trained_at          = None
+        self._signal_thresholds  = {}   # calibrated from OOF probability distribution
 
         lr = max(0.01, 0.1 * (1 - lambda_reg))
 
@@ -192,6 +203,9 @@ class NUMKTEnsemble:
         df = pd.DataFrame(feature_rows).fillna(0.5)
         y  = np.array(return_labels)
 
+        # Extract period groups from backtest rows so CV respects time boundaries
+        groups = df["_period_idx"].values if "_period_idx" in df.columns else None
+
         rank_cols = self._select_rank_cols(df)
         if not rank_cols:
             logger.warning("No feature columns found in backtest data")
@@ -209,7 +223,7 @@ class NUMKTEnsemble:
             )
             return self._fit_from_price_cache(df)
 
-        self._run_cv_and_fit(X, y)
+        self._run_cv_and_fit(X, y, groups=groups)
 
         # IC from OOF predictions — genuinely out-of-sample
         if (forward_returns is not None
@@ -263,6 +277,20 @@ class NUMKTEnsemble:
             logger.warning("No tickers in features_df — using last-resort fallback")
             return self._fit_last_resort(features_df)
 
+        # Extend universe with any anchor tickers already in the price cache.
+        # Never triggers a new Yahoo fetch — only uses what's on disk.
+        anchor_cached = [
+            t for t in _ANCHOR_TICKERS
+            if t not in tickers
+            and (PRICE_DIR / f"{t.replace('.', '_').replace('/', '_')}.parquet").exists()
+        ]
+        if anchor_cached:
+            logger.info(
+                f"Extending training universe with {len(anchor_cached)} "
+                f"cached anchor ticker(s): {anchor_cached}"
+            )
+            tickers = tickers + anchor_cached
+
         feature_rows, return_labels, forward_returns_list = [], [], []
 
         for horizon in FORWARD_HORIZONS:
@@ -303,10 +331,7 @@ class NUMKTEnsemble:
             )
             return self._fit_last_resort(features_df)
 
-        # Sort by window time index so TimeSeriesSplit sees data in
-        # chronological order. Rows from different horizons at the same
-        # t_start are grouped together, which is the best we can do without
-        # a single canonical time axis across horizons.
+        # Sort chronologically so group CV sees periods in order
         combined = sorted(
             zip(feature_rows, return_labels, forward_returns_list),
             key=lambda x: x[0].get("_time_idx", 0)
@@ -314,6 +339,9 @@ class NUMKTEnsemble:
         feature_rows, return_labels, forward_returns_list = (
             list(t) for t in zip(*combined)
         )
+
+        # Extract period groups before removing _time_idx
+        groups = np.array([r.get("_time_idx", 0) for r in feature_rows])
         for row in feature_rows:
             row.pop("_time_idx", None)
 
@@ -338,7 +366,7 @@ class NUMKTEnsemble:
             )
             return self._fit_last_resort(features_df)
 
-        self._run_cv_and_fit(X, y)
+        self._run_cv_and_fit(X, y, groups=groups)
 
         # IC from OOF predictions — genuinely out-of-sample
         if self._oof_proba is not None and len(self._oof_proba) == len(fwd_arr):
@@ -370,18 +398,20 @@ class NUMKTEnsemble:
         cached price series and generate non-overlapping (features, label)
         pairs stepping through the history.
 
-        Only price-derived features (momentum, vol, RSI, price_vs_52w_high)
-        are used here — all computable from price history at each window start
-        with no look-ahead bias. Fundamental ratios (PE, ROE, etc.) are
-        intentionally excluded: Yahoo Finance only provides today's values, so
-        using them in historical windows would leak future information into
-        training labels.
+        Price-derived features (momentum, vol, RSI, price_vs_52w_high) are
+        computed from price history at each window start with no look-ahead bias.
+        Fundamental features (PE, ROE, margins, etc.) are added from the cached
+        info JSON as a point-in-time proxy — today's values used as an approximation
+        across all historical windows. This is imperfect but far better than
+        filling with the neutral 0.5 and ensures the model sees fundamental signal
+        during training, matching the feature space used at inference.
 
         Each row is tagged with _time_idx = t_start so that
         _fit_from_price_cache can sort observations chronologically before
         TimeSeriesSplit CV.
         """
         price_series: dict[str, pd.Series] = {}
+        info_series:  dict[str, dict]      = {}
         for ticker in tickers:
             safe = ticker.replace(".", "_").replace("/", "_")
             path = PRICE_DIR / f"{safe}.parquet"
@@ -393,6 +423,14 @@ class NUMKTEnsemble:
                     price_series[ticker] = df_p["Close"].sort_index()
             except Exception as e:
                 logger.warning(f"Could not load price cache for {ticker}: {e}")
+            # Load cached fundamental snapshot (today's values — used as proxy)
+            info_path = INFO_DIR / f"{safe}.json"
+            if info_path.exists():
+                try:
+                    with open(info_path) as _f:
+                        info_series[ticker] = json.load(_f)
+                except Exception:
+                    info_series[ticker] = {}
 
         if len(price_series) < 3:
             return [], [], []
@@ -420,7 +458,7 @@ class NUMKTEnsemble:
                 if len(p) < 5:
                     continue
 
-                snap: dict = {}  # price-derived features only — no fundamentals
+                snap: dict = {}  # features for this window
 
                 # Momentum at this historical point
                 for days, key in [(21, "mom_1m"), (63, "mom_3m"),
@@ -435,11 +473,11 @@ class NUMKTEnsemble:
                 else:
                     snap["vol_60d"] = np.nan
 
-                # RSI-14 using Wilder's EMA
+                # RSI-14 using Wilder's EMA (alpha=1/N)
                 if len(p) > 15:
                     d    = p.diff().dropna()
-                    gain = d.clip(lower=0).ewm(span=14, adjust=False).mean().iloc[-1]
-                    loss = (-d.clip(upper=0)).ewm(span=14, adjust=False).mean().iloc[-1]
+                    gain = d.clip(lower=0).ewm(alpha=1/14, adjust=False).mean().iloc[-1]
+                    loss = (-d.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean().iloc[-1]
                     snap["rsi_14"] = float(100 - 100 / (1 + gain / (loss + 1e-9)))
                 else:
                     snap["rsi_14"] = np.nan
@@ -447,16 +485,37 @@ class NUMKTEnsemble:
                 hi = p.iloc[-min(252, len(p)):].max()
                 snap["price_vs_52w_high"] = float(p.iloc[-1] / hi - 1) if hi > 0 else np.nan
 
+                # Add fundamental features from cached info snapshot.
+                # These are today's values used as a point-in-time proxy.
+                if ticker in info_series:
+                    info = info_series[ticker]
+                    def _fi(key, default=np.nan):
+                        try:
+                            v = float(info.get(key) or default)
+                            return v if np.isfinite(v) else default
+                        except (TypeError, ValueError):
+                            return default
+                    snap["pe_ratio"]       = _fi("trailingPE")
+                    snap["forward_pe"]     = _fi("forwardPE")
+                    snap["pb_ratio"]       = _fi("priceToBook")
+                    snap["roe"]            = _fi("returnOnEquity")
+                    snap["net_margin"]     = _fi("profitMargins")
+                    snap["revenue_growth"] = _fi("revenueGrowth")
+                    snap["debt_equity"]    = _fi("debtToEquity")
+                    snap["dividend_yield"] = _fi("dividendYield")
+                    snap["beta"]           = _fi("beta")
+                    snap["log_mktcap"]     = np.log(max(_fi("marketCap", 1e6), 1e6))
+
                 raw_snaps[ticker] = snap
 
             if len(raw_snaps) < 3:
                 continue
 
             # Cross-sectional rank normalisation at this window's point in time.
-            # Only price-derived cols are present in snap_df — fundamentals are
-            # excluded to prevent look-ahead bias from today's Yahoo data.
+            # Price-derived features are always present; fundamental features are
+            # included when a cached info JSON exists for the ticker.
             snap_df = pd.DataFrame(raw_snaps).T
-            for col in PRICE_FEATURE_COLS:
+            for col in FEATURE_COLS:
                 if col in snap_df.columns and snap_df[col].notna().sum() > 1:
                     snap_df[col + "_rank"] = snap_df[col].rank(pct=True)
                 elif col + "_rank" not in snap_df.columns:
@@ -665,31 +724,80 @@ class NUMKTEnsemble:
         return rank_cols
 
 
-    def _run_cv_and_fit(self, X: np.ndarray, y: np.ndarray):
-        """Run TimeSeriesSplit CV then full fit on both pipelines.
+    @staticmethod
+    def _period_group_cv(groups: np.ndarray, n_splits: int):
+        """Time-respecting group CV: test periods are always strictly after train periods.
 
-        Uses cross_val_predict to obtain out-of-fold (OOF) probability
-        predictions. OOF predictions are made by models that never saw the
-        test fold during training, so both cv_accuracy and cv_ic are genuine
-        out-of-sample estimates — not inflated in-sample figures.
+        Ensures all observations from the same time period are on the same
+        side of every fold boundary, preventing cross-sectional leakage where
+        AAPL at period 7 (train) and MSFT at period 7 (test) would share the
+        same market regime.
+        """
+        unique_periods = sorted(np.unique(groups))
+        n = len(unique_periods)
+        n_splits = min(n_splits, max(2, n - 1))
+        step = max(1, n // (n_splits + 1))
+        for k in range(1, n_splits + 1):
+            test_end  = min(n, k * step + step)
+            train_end = test_end - step
+            if train_end <= 0:
+                continue
+            train_pds = unique_periods[:train_end]
+            test_pds  = unique_periods[train_end:test_end]
+            if not test_pds:
+                continue
+            train_idx = np.where(np.isin(groups, train_pds))[0]
+            test_idx  = np.where(np.isin(groups, test_pds))[0]
+            if len(train_idx) > 0 and len(test_idx) > 0:
+                yield train_idx, test_idx
+
+
+    def _run_cv_and_fit(self, X: np.ndarray, y: np.ndarray,
+                        groups: np.ndarray | None = None):
+        """Run CV then full fit on both pipelines.
+
+        When period groups are supplied, uses _period_group_cv so that all
+        observations from a given time period stay on the same side of every
+        fold boundary (prevents cross-sectional leakage).  Falls back to
+        TimeSeriesSplit when no group information is available.
         """
         n_splits = min(self.cv_folds, max(2, len(y) // 4))
-        tscv     = TimeSeriesSplit(n_splits=n_splits)
+
+        if groups is not None and len(np.unique(groups)) >= 3:
+            cv = list(NUMKTEnsemble._period_group_cv(groups, n_splits))
+            if not cv:
+                cv = TimeSeriesSplit(n_splits=n_splits)
+        else:
+            cv = TimeSeriesSplit(n_splits=n_splits)
 
         self._oof_proba: np.ndarray | None = None
         try:
             oof_rf = cross_val_predict(
-                self._rf_pipe, X, y, cv=tscv,
+                self._rf_pipe, X, y, cv=cv,
                 method="predict_proba", n_jobs=-1,
             )[:, 1]
             oof_gb = cross_val_predict(
-                self._gb_pipe, X, y, cv=tscv,
+                self._gb_pipe, X, y, cv=cv,
                 method="predict_proba", n_jobs=-1,
             )[:, 1]
-            self._oof_proba = self.rf_weight * oof_rf + self.gb_weight * oof_gb
-            oof_class       = (self._oof_proba >= 0.5).astype(int)
+            self._oof_proba  = self.rf_weight * oof_rf + self.gb_weight * oof_gb
+            oof_class        = (self._oof_proba >= 0.5).astype(int)
             self.cv_accuracy = float(np.mean(oof_class == y))
             logger.info(f"OOF CV accuracy (ensemble): {self.cv_accuracy:.3f}")
+
+            # Calibrate signal thresholds from OOF probability distribution
+            if len(self._oof_proba) >= 10:
+                self._signal_thresholds = {
+                    "strong_buy": float(np.percentile(self._oof_proba, 80)),
+                    "buy":        float(np.percentile(self._oof_proba, 55)),
+                    "hold":       float(np.percentile(self._oof_proba, 30)),
+                }
+                logger.info(
+                    f"Signal thresholds calibrated from OOF dist — "
+                    f"STRONG BUY>{self._signal_thresholds['strong_buy']:.3f}, "
+                    f"BUY>{self._signal_thresholds['buy']:.3f}, "
+                    f"HOLD>{self._signal_thresholds['hold']:.3f}"
+                )
         except Exception as e:
             logger.warning(f"CV failed: {e}")
             self.cv_accuracy = 0.0

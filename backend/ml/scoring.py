@@ -56,10 +56,13 @@ def _factor_profile(row: pd.Series) -> dict:
     }
 
 
-def _get_signal(score: float) -> str:
-    if score > 0.68: return "STRONG BUY"
-    if score > 0.54: return "BUY"
-    if score > 0.38: return "HOLD"
+def _get_signal(score: float, thresholds: dict | None = None) -> str:
+    sb = thresholds.get("strong_buy", 0.68) if thresholds else 0.68
+    b  = thresholds.get("buy",        0.54) if thresholds else 0.54
+    h  = thresholds.get("hold",       0.38) if thresholds else 0.38
+    if score > sb: return "STRONG BUY"
+    if score > b:  return "BUY"
+    if score > h:  return "HOLD"
     return "SELL"
 
 
@@ -160,7 +163,8 @@ def score_universe(
         inst_pct    = _fmt(stock.get("inst_ownership"))
         insider_pct = _fmt(stock.get("insider_ownership"))
 
-        signal         = _get_signal(composite)
+        thresholds     = getattr(model, "_signal_thresholds", None) or None
+        signal         = _get_signal(composite, thresholds)
         factor_profile = _factor_profile(row)
         reasons        = _build_reasons(row, signal, inst_pct, insider_pct)
 
@@ -178,6 +182,7 @@ def score_universe(
             "fundamental_score":   round(fund_score * 100, 1),
             "inst_ownership_pct":  round(inst_pct * 100, 1) if inst_pct is not None else None,
             "insider_ownership_pct": round(insider_pct * 100, 1) if insider_pct is not None else None,
+            "beta_note":           "vs S&P 500 — may not reflect local market beta" if market in ("UK", "IE") else None,
             "factor_profile":      factor_profile,
             "buy_reasons":         reasons,
             "fundamentals": {
