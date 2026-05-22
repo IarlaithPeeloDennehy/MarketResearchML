@@ -66,9 +66,8 @@ def _get_signal(score: float, thresholds: dict | None = None) -> str:
     return "SELL"
 
 
-def _build_reasons(row: pd.Series, signal: str, inst_pct: float | None, insider_pct: float | None) -> list[str]:
-    """Generate plain-English factor reasons for the signal."""
-    reasons = []
+def _bull_points(row: pd.Series, inst_pct: float | None, insider_pct: float | None) -> list[str]:
+    """Plain-English reasons the stock could outperform."""
     pe  = row.get("pe_ratio")
     roe = row.get("roe")
     mg  = row.get("net_margin")
@@ -77,42 +76,69 @@ def _build_reasons(row: pd.Series, signal: str, inst_pct: float | None, insider_
     m12 = row.get("mom_12m")
     dy  = row.get("dividend_yield")
 
+    points = []
+    if pe and pe < 18:
+        points.append(f"Attractive valuation at P/E {pe:.1f}x — below market average")
+    if roe and roe > 0.20:
+        points.append(f"Strong ROE of {roe*100:.0f}% — durable competitive advantage")
+    if mg and mg > 0.15:
+        points.append(f"High net margin of {mg*100:.1f}% — pricing power and scalability")
+    if de and de < 0.5:
+        points.append(f"Conservative balance sheet at {de:.2f}x D/E — financial flexibility")
+    if rg and rg > 0.12:
+        points.append(f"Revenue growing at {rg*100:.0f}% — compounding top-line momentum")
+    if m12 and m12 > 0.15:
+        points.append(f"Strong 12M momentum (+{m12*100:.0f}%)")
+    if dy and dy > 0.03:
+        points.append(f"Dividend yield of {dy*100:.1f}% — income with quality backing")
+    if inst_pct and inst_pct > 0.70:
+        points.append(f"{inst_pct*100:.0f}% institutional ownership — strong professional conviction")
+    if insider_pct and insider_pct > 0.10:
+        points.append(f"Insiders hold {insider_pct*100:.0f}% — management aligned with shareholders")
+    return points
+
+
+def _bear_points(row: pd.Series, inst_pct: float | None) -> list[str]:
+    """Plain-English risks that could hold the stock back."""
+    pe  = row.get("pe_ratio")
+    mg  = row.get("net_margin")
+    de  = row.get("debt_equity")
+    rg  = row.get("revenue_growth")
+    m12 = row.get("mom_12m")
+
+    points = []
+    if pe and pe > 50:
+        points.append(f"Stretched P/E of {pe:.0f}x requires perfect execution")
+    if m12 and m12 < -0.08:
+        points.append(f"Negative 12M trend ({m12*100:.0f}%) — market expressing concern")
+    if de and de > 2.0:
+        points.append(f"High leverage at {de:.2f}x D/E — elevated refinancing risk")
+    if rg and rg < 0:
+        points.append(f"Declining revenues ({rg*100:.0f}%) — structural headwinds")
+    if mg and mg < 0.05:
+        points.append(f"Very thin margins ({mg*100:.1f}%) — limited operational resilience")
+    if inst_pct and inst_pct < 0.30:
+        points.append(f"Low institutional interest ({inst_pct*100:.0f}%) — limited professional coverage")
+    return points
+
+
+def _build_reasons(row: pd.Series, signal: str, inst_pct: float | None, insider_pct: float | None) -> list[str]:
+    """Generate plain-English factor reasons for the signal (one-sided, by signal)."""
     is_buy = signal in ("STRONG BUY", "BUY")
+    points = _bull_points(row, inst_pct, insider_pct) if is_buy else _bear_points(row, inst_pct)
+    return points[:4]
 
-    if is_buy:
-        if pe and pe < 18:
-            reasons.append(f"Attractive valuation at P/E {pe:.1f}x — below market average")
-        if roe and roe > 0.20:
-            reasons.append(f"Strong ROE of {roe*100:.0f}% — durable competitive advantage")
-        if mg and mg > 0.15:
-            reasons.append(f"High net margin of {mg*100:.1f}% — pricing power and scalability")
-        if de and de < 0.5:
-            reasons.append(f"Conservative balance sheet at {de:.2f}x D/E — financial flexibility")
-        if rg and rg > 0.12:
-            reasons.append(f"Revenue growing at {rg*100:.0f}% — compounding top-line momentum")
-        if m12 and m12 > 0.15:
-            reasons.append(f"Strong 12M momentum (+{m12*100:.0f}%)")
-        if dy and dy > 0.03:
-            reasons.append(f"Dividend yield of {dy*100:.1f}% — income with quality backing")
-        if inst_pct and inst_pct > 0.70:
-            reasons.append(f"{inst_pct*100:.0f}% institutional ownership — strong professional conviction")
-        if insider_pct and insider_pct > 0.10:
-            reasons.append(f"Insiders hold {insider_pct*100:.0f}% — management aligned with shareholders")
-    else:
-        if pe and pe > 50:
-            reasons.append(f"Stretched P/E of {pe:.0f}x requires perfect execution")
-        if m12 and m12 < -0.08:
-            reasons.append(f"Negative 12M trend ({m12*100:.0f}%) — market expressing concern")
-        if de and de > 2.0:
-            reasons.append(f"High leverage at {de:.2f}x D/E — elevated refinancing risk")
-        if rg and rg < 0:
-            reasons.append(f"Declining revenues ({rg*100:.0f}%) — structural headwinds")
-        if mg and mg < 0.05:
-            reasons.append(f"Very thin margins ({mg*100:.1f}%) — limited operational resilience")
-        if inst_pct and inst_pct < 0.30:
-            reasons.append(f"Low institutional interest ({inst_pct*100:.0f}%) — limited professional coverage")
 
-    return reasons[:4]
+def build_thesis(row: pd.Series, inst_pct: float | None, insider_pct: float | None) -> dict:
+    """Balanced bull AND bear case for a stock, regardless of signal.
+
+    Used by the public insights snapshot to build trust: every headline stock
+    shows both why the model likes it and what could go wrong.
+    """
+    return {
+        "bull": _bull_points(row, inst_pct, insider_pct)[:3],
+        "bear": _bear_points(row, inst_pct)[:3],
+    }
 
 
 def score_universe(

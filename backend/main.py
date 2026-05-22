@@ -41,6 +41,7 @@ from ml.feature_engineering import build_features
 from ml.model import NUMKTEnsemble
 from ml.backtest import run_backtest
 from ml.scoring import score_universe
+from ml.insights import build_snapshot, load_snapshot, is_stale
 from auth.router import router as auth_router
 from auth.dependencies import get_current_user
 from auth.models import User, UserSession
@@ -124,6 +125,29 @@ _data_cache:  dict = {}   # "latest" -> raw_data, features_df
 # ── Background retraining ──────────────────────────────────────────────────
 _last_retrain: float = 0.0          # Unix timestamp of last background retrain
 _RETRAIN_COOLDOWN    = 3600         # seconds — don't retrain more than once per hour
+
+# ── Public insights snapshot ───────────────────────────────────────────────
+_last_insights_build: float = 0.0   # Unix timestamp of last snapshot build
+_INSIGHTS_COOLDOWN          = 3600  # seconds — rebuild at most once per hour
+
+
+async def _build_insights_snapshot() -> None:
+    """Build the public /api/insights snapshot in the background.
+
+    Runs in an asyncio task so it never blocks a request. The cooldown stamp is
+    set up-front so concurrent requests don't trigger overlapping builds. A true
+    daily Render cron / APScheduler job is the more robust alternative; this lazy
+    refresh mirrors the existing _background_retrain pattern and needs no new
+    dependency on Render's single web service.
+    """
+    global _last_insights_build
+    _last_insights_build = datetime.now(timezone.utc).timestamp()
+    try:
+        logger.info("Insights snapshot: building")
+        snap = await build_snapshot()
+        logger.info(f"Insights snapshot: built ({snap.get('universe_size')} stocks)")
+    except Exception as exc:
+        logger.error(f"Insights snapshot build failed (non-fatal): {exc}", exc_info=True)
 
 
 async def _background_retrain(raw_data: dict, features_df) -> None:
@@ -258,6 +282,14 @@ async def startup():
     else:
         logger.info("No saved models found — will use synthetic labels until backtest runs")
 
+    # ── Warm the public insights snapshot ──────────────────────────────────
+    try:
+        if is_stale():
+            asyncio.create_task(_build_insights_snapshot())
+            logger.info("Insights snapshot warm-up queued on startup")
+    except Exception as exc:
+        logger.warning(f"Insights warm-up skipped: {exc}")
+
 
 # ── Schemas ────────────────────────────────────────────────────────────────
 
@@ -316,6 +348,28 @@ def api_status():
         "saved_models": len(saved),
         "best_model":   saved[0] if saved else None,
     }
+
+
+# ── Public insights (no auth) ──────────────────────────────────────────────
+
+@app.get("/api/insights")
+@limiter.limit("30/minute")
+async def get_insights(request: Request):
+    """Public, login-free snapshot: verified track record + today's theses.
+
+    Intentionally has no get_current_user dependency — this is the one public
+    data endpoint and the acquisition surface. Serves the last snapshot
+    immediately; if it's stale, kicks a non-blocking background rebuild guarded
+    by a cooldown so repeated hits never trigger a Yahoo fetch storm.
+    """
+    snap   = load_snapshot()
+    now_ts = datetime.now(timezone.utc).timestamp()
+    if is_stale() and (now_ts - _last_insights_build) > _INSIGHTS_COOLDOWN:
+        asyncio.create_task(_build_insights_snapshot())
+    if snap is None:
+        return {"status": "warming",
+                "message": "Insights are being generated. Check back shortly."}
+    return snap
 
 
 # ── Main analysis ──────────────────────────────────────────────────────────

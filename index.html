@@ -669,6 +669,44 @@ option{background:var(--bg);color:var(--text1)}
 .w-card.ac3{background:var(--green-dim);border-color:var(--green-border);color:var(--green)}
 .w-num{font-family:'Inter',sans-serif;font-size:28px;font-weight:600;color:inherit;margin-bottom:6px;letter-spacing:-0.01em}
 
+/* ═══════════════════ PUBLIC INSIGHTS HERO ═══════════════════ */
+.ins-hero{width:100%;max-width:960px;display:flex;flex-direction:column;gap:24px;text-align:left}
+.ins-proof-head{font-family:'Inter',sans-serif;font-size:1.9rem;font-weight:500;color:var(--text2);line-height:1.2;letter-spacing:-0.015em;text-align:center;max-width:760px;margin:0 auto}
+.ins-proof-head em{font-weight:700;color:var(--green);font-style:normal}
+.ins-proof-sub{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text3);letter-spacing:0.06em;text-transform:uppercase;text-align:center}
+.ins-metrics{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+@media(max-width:720px){.ins-metrics{grid-template-columns:repeat(2,1fr)}}
+.ins-metric{background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);padding:16px 14px}
+.ins-metric-lbl{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text3);margin-bottom:8px}
+.ins-metric-val{font-family:'Inter',sans-serif;font-size:24px;font-weight:600;letter-spacing:-0.01em}
+.ins-metric-note{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--text3);margin-top:6px;line-height:1.4}
+.ins-sec-title{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text2);text-align:center;margin-top:4px}
+.ins-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+@media(max-width:820px){.ins-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:520px){.ins-grid{grid-template-columns:1fr}}
+.ins-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);padding:18px;display:flex;flex-direction:column;gap:10px;transition:all 0.2s}
+.ins-card:hover{border-color:var(--border2);background:var(--surface2);transform:translateY(-3px);box-shadow:0 8px 24px rgba(0,0,0,0.18)}
+.ins-card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.ins-tk{font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:700;color:var(--text1)}
+.ins-nm{font-family:'Inter',sans-serif;font-size:11px;color:var(--text3);margin-top:2px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ins-sig{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;letter-spacing:0.05em;padding:3px 9px;border:1px solid;border-radius:var(--r-pill);white-space:nowrap}
+.ins-bb{font-family:'Inter',sans-serif;font-size:12px;color:var(--text2);line-height:1.45;display:flex;gap:8px;align-items:flex-start}
+.ins-bb-tag{font-family:'JetBrains Mono',monospace;font-size:8.5px;font-weight:700;letter-spacing:0.06em;padding:2px 6px;border-radius:4px;flex-shrink:0;margin-top:1px}
+.ins-bb-tag.bull{background:var(--green-dim);color:var(--green)}
+.ins-bb-tag.bear{background:var(--red-dim);color:var(--red)}
+.ins-hr{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text3);border-top:1px solid var(--border);padding-top:9px;margin-top:2px}
+.ins-hr strong{color:var(--text1)}
+.ins-cta{display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:4px}
+.ins-cta-row{display:flex;gap:12px;flex-wrap:wrap;justify-content:center}
+.ins-cta-btn{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;letter-spacing:0.05em;padding:12px 22px;border-radius:var(--r2);cursor:pointer;border:1px solid;transition:all 0.2s}
+.ins-cta-btn.primary{background:var(--primary);color:#0F1115;border-color:var(--primary)}
+.ins-cta-btn.primary:hover{background:var(--primary-bright)}
+.ins-cta-btn.ghost{background:transparent;color:var(--text2);border-color:var(--border2)}
+.ins-cta-btn.ghost:hover{background:var(--surface2);color:var(--text1)}
+.ins-cta-note{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text3)}
+.ins-divider{display:flex;align-items:center;gap:14px;width:100%;max-width:720px;margin:8px auto 0;color:var(--text3);font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.08em}
+.ins-divider::before,.ins-divider::after{content:'';flex:1;height:1px;background:var(--border)}
+
 /* ═══════════════════ BACKTEST ═══════════════════ */
 .bt-panel{
   background:var(--surface);border:1px solid var(--border);
@@ -1188,6 +1226,7 @@ option{background:var(--bg);color:var(--text1)}
 <main class="main">
   <div class="welcome" id="welcomeScreen">
     <div class="w-eyebrow"><span class="w-eyebrow-dot"></span>System Ready &middot; NUMKT Ensemble v3.1</div>
+    <div class="ins-hero" id="insightsHero" style="display:none"></div>
     <div class="w-headline">Select your universe,<br><em>run the model.</em></div>
     <p style="font-family:'JetBrains Mono',monospace;font-size:15px;color:var(--text2);max-width:520px;line-height:1.6">Search and add stocks from the US, UK and Irish markets. The ensemble ML model layers fundamental factors and multi-factor analysis to produce clear BUY, HOLD and SELL signals.</p>
     <div class="w-cards">
@@ -1995,6 +2034,98 @@ async function runBacktest(){
 document.getElementById('dpClose').onclick=()=>document.getElementById('detailPanel').classList.remove('open');
 document.getElementById('runBtn').onclick=runAnalysis;
 initStockList();
+
+/* ═══════════════════ PUBLIC INSIGHTS HERO ═══════════════════ */
+// Login-free trust layer: fetches the daily snapshot from /api/insights and
+// renders the verified track record + balanced bull/bear theses on the landing
+// page. Fails silently to the original welcome screen if unavailable.
+async function loadInsights(){
+  let data;
+  try{
+    const r=await fetch('/api/insights');
+    if(!r.ok)return;
+    data=await r.json();
+  }catch(e){return;}
+  if(!data||data.status==='warming'||!Array.isArray(data.theses)||!data.theses.length)return;
+  renderInsightsHero(data);
+}
+
+function _insMetricColor(good){return good?'var(--green)':'var(--text1)';}
+
+function renderInsightsHero(d){
+  const el=document.getElementById('insightsHero');
+  if(!el)return;
+  const tr=d.track_record||{};
+  const interp=tr.interpretation||{};
+  const hr=tr.hit_rate;
+
+  const head=hr!=null
+    ? `The model's top-ranked stocks beat the market <em>${hr}%</em> of the time`
+    : `How the model reads the market today`;
+  const sub=tr.n_periods
+    ? `Walk-forward backtest · ${tr.n_periods} periods · tested on data it never trained on`
+    : `Updated daily · ${d.universe_size} stocks across US, UK &amp; Ireland`;
+
+  const metrics=[
+    {lbl:'OOS Hit Rate', val:hr!=null?hr+'%':'—', note:interp.hit_rate||'beat the universe', good:hr!=null&&hr>55},
+    {lbl:tr.ic_is_holdout?'Holdout IC':'Info Coeff.', val:tr.ic!=null?tr.ic.toFixed(3):'—', note:interp.ic||'scores vs returns', good:tr.ic!=null&&tr.ic>0.05},
+    {lbl:'Ann. Alpha', val:tr.ann_alpha!=null?((tr.ann_alpha>0?'+':'')+tr.ann_alpha+'%'):'—', note:interp.alpha||'vs equal-weight', good:tr.ann_alpha!=null&&tr.ann_alpha>0},
+    {lbl:'Sharpe', val:tr.sharpe!=null?tr.sharpe.toFixed(2):'—', note:interp.sharpe||'risk-adjusted', good:tr.sharpe!=null&&tr.sharpe>1},
+    {lbl:'Max Drawdown', val:tr.max_drawdown!=null?tr.max_drawdown+'%':'—', note:interp.drawdown||'peak-to-trough', good:tr.max_drawdown!=null&&tr.max_drawdown>-20},
+  ];
+  const metricsHtml=metrics.map(m=>`<div class="ins-metric">
+      <div class="ins-metric-lbl">${m.lbl}</div>
+      <div class="ins-metric-val" style="color:${_insMetricColor(m.good)}">${m.val}</div>
+      <div class="ins-metric-note">${m.note}</div>
+    </div>`).join('');
+
+  const buys=d.theses.filter(t=>t.signal==='STRONG BUY'||t.signal==='BUY').slice(0,4);
+  const sells=d.theses.filter(t=>t.signal==='SELL').slice(-2);
+  let cards=[...buys,...sells];
+  if(!cards.length)cards=d.theses.slice(0,6);
+  const cardsHtml=cards.map(thesisCard).join('');
+
+  const trackBlock=hr!=null||tr.ic!=null
+    ? `<div class="ins-proof-sub">${sub}</div><div class="ins-metrics">${metricsHtml}</div>`
+    : '';
+
+  el.innerHTML=`
+    <div class="ins-proof-head">${head}</div>
+    ${trackBlock}
+    <div class="ins-sec-title">Today's calls — the bull case and the bear case for each</div>
+    <div class="ins-grid">${cardsHtml}</div>
+    <div class="ins-cta">
+      <div class="ins-cta-row">
+        <button class="ins-cta-btn primary" onclick="document.getElementById('runBtn').click()">RUN THE MODEL ON THESE ↗</button>
+        <button class="ins-cta-btn ghost" onclick="Auth.openModal();Auth.showTab('signup')">CREATE FREE ACCOUNT</button>
+      </div>
+      <div class="ins-cta-note">Free account unlocks custom watchlists, deep per-stock breakdowns &amp; saved analyses.</div>
+    </div>
+    <div class="ins-divider">OR BUILD YOUR OWN BELOW</div>`;
+  el.style.display='flex';
+}
+
+function thesisCard(t){
+  const isBuy=t.signal&&t.signal.indexOf('BUY')>=0;
+  const sigColor=isBuy?'var(--green)':(t.signal==='SELL'?'var(--red)':'var(--amber)');
+  const bull=(t.bull&&t.bull[0])?t.bull[0]:'Balanced fundamentals across factors.';
+  const bear=(t.bear&&t.bear[0])?t.bear[0]:'No major red flags in the current data.';
+  const conf=t.confidence_label?t.confidence_label.toLowerCase():'';
+  const hr=t.band_hit_rate!=null
+    ? `Stocks rated this confidently beat the market <strong>${t.band_hit_rate}%</strong> of the time`
+    : `${t.confidence_label||''} confidence`;
+  return `<div class="ins-card">
+    <div class="ins-card-top">
+      <div><div class="ins-tk">${t.ticker}</div><div class="ins-nm">${t.name||''}</div></div>
+      <div class="ins-sig" style="color:${sigColor};border-color:${sigColor}">${t.signal}</div>
+    </div>
+    <div class="ins-bb"><span class="ins-bb-tag bull">BULL</span><span>${bull}</span></div>
+    <div class="ins-bb"><span class="ins-bb-tag bear">BEAR</span><span>${bear}</span></div>
+    <div class="ins-hr">${hr}</div>
+  </div>`;
+}
+
+loadInsights();
 
 /* ═══════════════════ FETCH INTERCEPTOR ═══════════════════ */
 // Wraps window.fetch to handle two global error conditions without changing
