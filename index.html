@@ -1173,7 +1173,7 @@ option{background:var(--bg);color:var(--text1)}
 
   <div class="sb-section">
     <div class="sb-label">Model Layers</div>
-    <div class="tog-row"><span class="tog-label">Fama-French 5-factor model</span><label class="tog"><input type="checkbox" id="quantToggle" checked><span class="tog-sl"></span></label></div>
+    <div class="tog-row"><span class="tog-label">Factor profile overlay</span><label class="tog"><input type="checkbox" id="quantToggle" checked><span class="tog-sl"></span></label></div>
     <div class="tog-row"><span class="tog-label">Geopolitical risk overlay</span><label class="tog"><input type="checkbox" id="geoToggle"><span class="tog-sl"></span></label></div>
   </div>
 
@@ -1189,7 +1189,7 @@ option{background:var(--bg);color:var(--text1)}
   <div class="welcome" id="welcomeScreen">
     <div class="w-eyebrow"><span class="w-eyebrow-dot"></span>System Ready &middot; NUMKT Ensemble v3.1</div>
     <div class="w-headline">Select your universe,<br><em>run the model.</em></div>
-    <p style="font-family:'JetBrains Mono',monospace;font-size:15px;color:var(--text2);max-width:520px;line-height:1.6">Search and add stocks from the US, UK and Irish markets. The ensemble ML model layers fundamental factors and Fama-French quant analysis to produce clear BUY, HOLD and SELL signals.</p>
+    <p style="font-family:'JetBrains Mono',monospace;font-size:15px;color:var(--text2);max-width:520px;line-height:1.6">Search and add stocks from the US, UK and Irish markets. The ensemble ML model layers fundamental factors and multi-factor analysis to produce clear BUY, HOLD and SELL signals.</p>
     <div class="w-cards">
       <div class="w-card"><div class="w-num">80+</div>Stocks</div>
       <div class="w-card"><div class="w-num">3</div>Markets</div>
@@ -1495,18 +1495,13 @@ function norm(vals){
   return vals.map(v=>(v-mn)/(mx-mn));
 }
 
-function ff5(stocks){
+function factorProfile(stocks){
   return stocks.map(s=>({
-    hml:  s.pe>0&&(1/s.pe)>0.06?0.03:(1/s.pe)<0.02?-0.02:0,
-    rmw:  s.mg>0.20?0.025:s.mg<0.08?-0.015:0.005,
-    cma:  s.rg<0.05?0.015:s.rg>0.20?-0.020:0,
-    smb:  s.mc<100?0.040:s.mc<400?0.010:-0.010,
-    mom:  s.m12>0.20?0.030:s.m12<-0.05?-0.025:0.005,
-    alphaEst: +(
-      (s.mg>0.20?0.025:s.mg<0.08?-0.015:0.005)+
-      (s.rg<0.05?0.015:s.rg>0.20?-0.020:0)+
-      (s.m12>0.20?0.030:s.m12<-0.05?-0.025:0.005)+0.005
-    ).toFixed(4),
+    value:      s.pe>0&&(1/s.pe)>0.06?0.03:(s.pe>0&&(1/s.pe)<0.02)?-0.02:0,
+    quality:    s.mg>0.20?0.025:s.mg<0.08?-0.015:0.005,
+    investment: s.rg<0.05?0.015:s.rg>0.20?-0.020:0,
+    size:       s.mc<100?0.040:s.mc<400?0.010:-0.010,
+    momentum:   s.m12>0.20?0.030:s.m12<-0.05?-0.025:0.005,
   }));
 }
 
@@ -1514,22 +1509,23 @@ function computeScores(stocks,profile,risk,lambda,useFF5){
   const w=profile.w,rp=RISK[risk];
   const feats=['pe','pb','roe','de','dy','rg','mg','m12','m3'];
   const nd={};feats.forEach(f=>{nd[f]=norm(stocks.map(s=>s[f]));});
-  const ff=ff5(stocks);
+  const fp=factorProfile(stocks);
   return stocks.map((s,i)=>{
     let raw=0;
     feats.forEach(f=>{raw+=(w[f]||0)*nd[f][i];});
     const betaPen=rp.bp*Math.max(0,s.beta-rp.mb);
     const l2=lambda*0.05;
     let fund=Math.max(0,Math.min(1,raw-betaPen-l2+0.42));
-    const q=useFF5?(ff[i].hml+ff[i].rmw+ff[i].cma+ff[i].mom)*0.35:0;
+    const q=useFF5?(fp[i].value+fp[i].quality+fp[i].investment+fp[i].momentum)*0.35:0;
     const composite=fund+q;
     const noise=(Math.random()-0.5)*0.028;
+    const tilt=fp[i].value+fp[i].quality+fp[i].investment+fp[i].size+fp[i].momentum;
     return{
       ...s,
       score:     Math.max(0.04,Math.min(0.97,composite+noise)),
       fundScore: +fund.toFixed(3),
-      quantScore:+((ff[i].alphaEst*100+50)).toFixed(1),
-      ff:        ff[i],
+      quantScore:+(tilt*100/5+50).toFixed(1),
+      ff:        fp[i],
     };
   });
 }
@@ -1597,10 +1593,10 @@ async function runAnalysis(){
 
   let steps;
   if(backendLive){
-    steps=['Connecting to NUMKT ML backend','Fetching live data from Yahoo Finance',`Running ${folds}-fold TimeSeriesSplit CV`,'Training Random Forest (300 trees)','Training Gradient Boosting ensemble','Blending predictions + FF5 factors','Generating BUY / HOLD / SELL signals'];
+    steps=['Connecting to NUMKT ML backend','Fetching live data from Yahoo Finance',`Running ${folds}-fold TimeSeriesSplit CV`,'Training Random Forest (300 trees)','Training Gradient Boosting ensemble','Blending predictions + factor signals','Generating BUY / HOLD / SELL signals'];
   } else {
     steps=['Backend offline — using local factor model',`Running ${folds}-fold cross-validation (simulated)`,'Training Random Forest (500 trees)','Training Gradient Boosting ensemble','Blending model predictions'];
-    if(useFF5)steps.push('Computing Fama-French 5-factor model');
+    if(useFF5)steps.push('Computing factor profile signals');
     steps.push('Generating BUY / HOLD / SELL signals');
   }
 
@@ -1635,7 +1631,7 @@ async function runAnalysis(){
   if(backendResults&&backendResults.results&&backendResults.results.length){
     scored=backendResults.results.map(br=>{
       const local=ALL_STOCKS.find(s=>s.t===br.ticker)||{};
-      return{...local,t:br.ticker,n:br.name||local.n||br.ticker,s:br.sector||local.s||'Unknown',m:br.market||local.m||'US',p:br.last_price||local.p||0,score:br.composite_score/100,fundScore:br.fundamental_score/100,instPct:br.inst_ownership_pct,insiderPct:br.insider_ownership_pct,ff:mapFF5(br.ff5),signal:br.signal,buyReasons:br.buy_reasons||[],pe:br.fundamentals?.pe_ratio||local.pe,roe:br.fundamentals?.roe!=null?br.fundamentals.roe/100:local.roe,mg:br.fundamentals?.net_margin!=null?br.fundamentals.net_margin/100:local.mg,de:br.fundamentals?.debt_equity||local.de,dy:br.fundamentals?.dividend_yield!=null?br.fundamentals.dividend_yield/100:local.dy,rg:br.fundamentals?.revenue_growth!=null?br.fundamentals.revenue_growth/100:local.rg,m12:br.fundamentals?.mom_12m!=null?br.fundamentals.mom_12m/100:local.m12,beta:br.fundamentals?.beta||local.beta,mc:br.market_cap_bn||local.mc,isLive:true};
+      return{...local,t:br.ticker,n:br.name||local.n||br.ticker,s:br.sector||local.s||'Unknown',m:br.market||local.m||'US',p:br.last_price||local.p||0,score:br.composite_score/100,fundScore:br.fundamental_score/100,instPct:br.inst_ownership_pct,insiderPct:br.insider_ownership_pct,ff:mapFactorProfile(br.factor_profile),signal:br.signal,buyReasons:br.buy_reasons||[],pe:br.fundamentals?.pe_ratio||local.pe,roe:br.fundamentals?.roe!=null?br.fundamentals.roe/100:local.roe,mg:br.fundamentals?.net_margin!=null?br.fundamentals.net_margin/100:local.mg,de:br.fundamentals?.debt_equity||local.de,dy:br.fundamentals?.dividend_yield!=null?br.fundamentals.dividend_yield/100:local.dy,rg:br.fundamentals?.revenue_growth!=null?br.fundamentals.revenue_growth/100:local.rg,m12:br.fundamentals?.mom_12m!=null?br.fundamentals.mom_12m/100:local.m12,beta:br.fundamentals?.beta||local.beta,mc:br.market_cap_bn||local.mc,isLive:true};
     });
   } else {
     scored=computeScores(selArr,profile,riskKey,lambda,useFF5);
@@ -1648,9 +1644,9 @@ async function runAnalysis(){
   renderResults(runResults);
 }
 
-function mapFF5(ff5){
-  if(!ff5)return{hml:0,rmw:0,cma:0,smb:0,mom:0,alphaEst:0};
-  return{hml:(ff5.hml||0)/100,rmw:(ff5.rmw||0)/100,cma:(ff5.cma||0)/100,smb:(ff5.smb||0)/100,mom:(ff5.mom||0)/100,alphaEst:(ff5.alpha_est||0)/100};
+function mapFactorProfile(fp){
+  if(!fp)return{value:0,quality:0,investment:0,size:0,momentum:0};
+  return{value:(fp.value||0)/100,quality:(fp.quality||0)/100,investment:(fp.investment||0)/100,size:(fp.size||0)/100,momentum:(fp.momentum||0)/100};
 }
 
 function updateBackendBadge(live){
@@ -1715,18 +1711,18 @@ function renderResults(R){
   const qp=document.getElementById('quantPanelSlot');
   if(useFF5){
     const avg=arr=>+(arr.reduce((a,b)=>a+b,0)/arr.length*100).toFixed(2);
-    const hml=avg(scored.map(s=>s.ff.hml));
-    const rmw=avg(scored.map(s=>s.ff.rmw));
-    const cma=avg(scored.map(s=>s.ff.cma));
-    const mom=avg(scored.map(s=>s.ff.mom));
-    const al=avg(scored.map(s=>s.ff.alphaEst));
-    qp.innerHTML=`<div class="qt-panel animate-in delay-1"><div class="qt-title">Fama-French 5-Factor Quant Analysis (Universe Average)</div>
+    const val=avg(scored.map(s=>s.ff.value));
+    const ql =avg(scored.map(s=>s.ff.quality));
+    const inv=avg(scored.map(s=>s.ff.investment));
+    const sz =avg(scored.map(s=>s.ff.size));
+    const mom=avg(scored.map(s=>s.ff.momentum));
+    qp.innerHTML=`<div class="qt-panel animate-in delay-1"><div class="qt-title">Factor Profile (Universe Average)</div>
       <div class="qt-metrics">
-        <div class="qt-metric"><div class="qt-lbl">HML Value</div><div class="qt-val" style="color:${hml>0?'var(--green)':'var(--red)'}">${hml>0?'+':''}${hml}%</div></div>
-        <div class="qt-metric"><div class="qt-lbl">RMW Quality</div><div class="qt-val" style="color:${rmw>0?'var(--green)':'var(--red)'}">${rmw>0?'+':''}${rmw}%</div></div>
-        <div class="qt-metric"><div class="qt-lbl">CMA Invest.</div><div class="qt-val" style="color:${cma>0?'var(--green)':'var(--red)'}">${cma>0?'+':''}${cma}%</div></div>
+        <div class="qt-metric"><div class="qt-lbl">Value</div><div class="qt-val" style="color:${val>0?'var(--green)':'var(--red)'}">${val>0?'+':''}${val}%</div></div>
+        <div class="qt-metric"><div class="qt-lbl">Quality</div><div class="qt-val" style="color:${ql>0?'var(--green)':'var(--red)'}">${ql>0?'+':''}${ql}%</div></div>
+        <div class="qt-metric"><div class="qt-lbl">Investment</div><div class="qt-val" style="color:${inv>0?'var(--green)':'var(--red)'}">${inv>0?'+':''}${inv}%</div></div>
+        <div class="qt-metric"><div class="qt-lbl">Size</div><div class="qt-val" style="color:${sz>0?'var(--green)':'var(--red)'}">${sz>0?'+':''}${sz}%</div></div>
         <div class="qt-metric"><div class="qt-lbl">Momentum</div><div class="qt-val" style="color:${mom>0?'var(--green)':'var(--red)'}">${mom>0?'+':''}${mom}%</div></div>
-        <div class="qt-metric"><div class="qt-lbl">Alpha Est.</div><div class="qt-val" style="color:${al>0?'var(--green)':'var(--red)'}">${al>0?'+':''}${al}%</div></div>
       </div></div>`;
   } else qp.innerHTML='';
 
@@ -1870,7 +1866,7 @@ function openDetail(ticker){
 
     <div class="score-row">
       <div class="sc-box"><div class="sc-lbl">FUNDAMENTAL</div><div class="sc-v">${r?(r.fundScore*100).toFixed(0):'-'}</div></div>
-      <div class="sc-box"><div class="sc-lbl">QUANT FF5</div><div class="sc-v" style="color:${r&&r.ff.alphaEst>0?'var(--green)':'var(--red)'}">${r?r.quantScore:'—'}</div></div>
+      <div class="sc-box"><div class="sc-lbl">FACTOR</div><div class="sc-v" style="color:${r&&(r.ff.value+r.ff.quality+r.ff.investment+r.ff.momentum)>0?'var(--green)':'var(--red)'}">${r?r.quantScore:'—'}</div></div>
       <div class="sc-box"><div class="sc-lbl">COMPOSITE</div><div class="sc-v">${score}%</div></div>
     </div>
 
@@ -1880,16 +1876,15 @@ function openDetail(ticker){
     </div>
 
     ${r&&r.ff?`<div class="dp-section">
-      <div class="dp-stitle">Fama-French Factor Decomposition</div>
+      <div class="dp-stitle">Factor Profile</div>
       <div class="ff5-box">
-        <div class="ff5-title">FF5 Factor Scores</div>
+        <div class="ff5-title">Factor Signals</div>
         <div class="ff5-grid">
-          <div class="ff5-row"><span>HML (Value)</span><span style="color:${r.ff.hml>0?'var(--green)':'var(--red)'}">${r.ff.hml>0?'+':''}${(r.ff.hml*100).toFixed(2)}%</span></div>
-          <div class="ff5-row"><span>RMW (Quality)</span><span style="color:${r.ff.rmw>0?'var(--green)':'var(--red)'}">${r.ff.rmw>0?'+':''}${(r.ff.rmw*100).toFixed(2)}%</span></div>
-          <div class="ff5-row"><span>CMA (Investment)</span><span style="color:${r.ff.cma>0?'var(--green)':'var(--red)'}">${r.ff.cma>0?'+':''}${(r.ff.cma*100).toFixed(2)}%</span></div>
-          <div class="ff5-row"><span>SMB (Size)</span><span style="color:${r.ff.smb>0?'var(--green)':'var(--red)'}">${r.ff.smb>0?'+':''}${(r.ff.smb*100).toFixed(2)}%</span></div>
-          <div class="ff5-row"><span>Momentum</span><span style="color:${r.ff.mom>0?'var(--green)':'var(--red)'}">${r.ff.mom>0?'+':''}${(r.ff.mom*100).toFixed(2)}%</span></div>
-          <div class="ff5-row"><span>Alpha estimate</span><span style="font-weight:600;color:${r.ff.alphaEst>0?'var(--green)':'var(--red)'}">${r.ff.alphaEst>0?'+':''}${(r.ff.alphaEst*100).toFixed(2)}%</span></div>
+          <div class="ff5-row"><span>Value</span><span style="color:${r.ff.value>0?'var(--green)':'var(--red)'}">${r.ff.value>0?'+':''}${(r.ff.value*100).toFixed(2)}%</span></div>
+          <div class="ff5-row"><span>Quality</span><span style="color:${r.ff.quality>0?'var(--green)':'var(--red)'}">${r.ff.quality>0?'+':''}${(r.ff.quality*100).toFixed(2)}%</span></div>
+          <div class="ff5-row"><span>Investment</span><span style="color:${r.ff.investment>0?'var(--green)':'var(--red)'}">${r.ff.investment>0?'+':''}${(r.ff.investment*100).toFixed(2)}%</span></div>
+          <div class="ff5-row"><span>Size</span><span style="color:${r.ff.size>0?'var(--green)':'var(--red)'}">${r.ff.size>0?'+':''}${(r.ff.size*100).toFixed(2)}%</span></div>
+          <div class="ff5-row"><span>Momentum</span><span style="color:${r.ff.momentum>0?'var(--green)':'var(--red)'}">${r.ff.momentum>0?'+':''}${(r.ff.momentum*100).toFixed(2)}%</span></div>
         </div>
       </div>
     </div>`:''}
@@ -2674,7 +2669,7 @@ const Saves = (() => {
           t: s.t, n: s.n, s: s.s, m: s.m, p: s.p,
           score: s.score, fundScore: s.fundScore,
           signal: s.signal, buyReasons: s.buyReasons || [],
-          ff: s.ff || { hml:0, rmw:0, cma:0, smb:0, mom:0, alphaEst:0 },
+          ff: s.ff || { value:0, quality:0, investment:0, size:0, momentum:0 },
           pe: s.pe, roe: s.roe, mg: s.mg, de: s.de,
           dy: s.dy, rg: s.rg, m12: s.m12, beta: s.beta, mc: s.mc,
           instPct: s.instPct ?? null, insiderPct: s.insiderPct ?? null,
@@ -2765,7 +2760,7 @@ const Saves = (() => {
           s:          s.s   || 'Unknown',
           m:          s.m   || 'US',
           p:          s.p   || 0,
-          ff:         s.ff  || { hml:0, rmw:0, cma:0, smb:0, mom:0, alphaEst:0 },
+          ff:         s.ff  || { value:0, quality:0, investment:0, size:0, momentum:0 },
           buyReasons: s.buyReasons || [],
           pe: s.pe ?? null, roe: s.roe ?? null, mg: s.mg ?? null,
           de: s.de ?? null, dy: s.dy ?? null,   rg: s.rg ?? null,
