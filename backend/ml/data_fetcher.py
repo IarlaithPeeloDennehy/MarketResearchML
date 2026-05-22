@@ -6,13 +6,13 @@ Fetches price + fundamental data from Yahoo Finance and caches it to disk.
 Cache strategy:
   - Price history saved as parquet files in ./cache/prices/
   - Fundamentals saved as JSON in ./cache/info/
-  - Cache is considered fresh for 24 hours
+  - Cache is considered fresh for 7 days
   - On cache hit: loads from disk instantly, no Yahoo request
   - On cache miss: fetches from Yahoo, saves to disk, returns data
 
 This means:
   - First run per ticker: ~3s to fetch from Yahoo
-  - All subsequent runs that day: ~0.05s from disk
+  - All subsequent runs that week: ~0.05s from disk
   - Backtest can use years of cached history without any rate limits
 """
 
@@ -40,7 +40,7 @@ CACHE_DIR.mkdir(exist_ok=True)
 PRICE_DIR.mkdir(exist_ok=True)
 INFO_DIR.mkdir(exist_ok=True)
 
-CACHE_MAX_AGE_HOURS = 24   # refresh stale cache after this many hours
+CACHE_MAX_AGE_HOURS = 168  # 7 days — refresh stale cache after this many hours
 MIN_BARS            = 60   # minimum price bars to consider valid
 
 _executor = ThreadPoolExecutor(max_workers=1)  # sequential = no rate limits
@@ -55,8 +55,6 @@ def _price_cache_path(ticker: str) -> Path:
 def _info_cache_path(ticker: str) -> Path:
     safe = ticker.replace(".", "_").replace("/", "_")
     return INFO_DIR / f"{safe}.json"
-
-CACHE_MAX_AGE_HOURS = 168  # 7 days
 
 def _cache_is_fresh(path: Path) -> bool:
     if not path.exists():

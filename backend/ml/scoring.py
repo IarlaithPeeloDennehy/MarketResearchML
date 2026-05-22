@@ -12,7 +12,7 @@ Signal thresholds (tunable):
 Each result includes:
   - composite_score    (0–100, from model probability minus risk penalty)
   - fundamental_score  (raw ML model probability)
-  - ff5_scores         (Fama-French 5-factor decomposition)
+  - factor_profile     (rule-based factor signals derived from fundamentals)
   - signal             (STRONG BUY / BUY / HOLD / SELL)
   - buy_reasons        (list of plain-English reasons, derived from factors)
   - key_fundamentals   (subset of data for display)
@@ -29,10 +29,11 @@ from .model import NUMKTEnsemble
 logger = logging.getLogger(__name__)
 
 
-def _ff5_decomposition(row: pd.Series) -> dict:
+def _factor_profile(row: pd.Series) -> dict:
     """
-    Fama-French 5-factor decomposition for a single stock.
-    Returns factor contributions as percentages.
+    Rule-based factor signals derived from today's fundamental snapshot.
+    These are directional signals (positive = favourable tilt), NOT regression
+    factor loadings. They should not be interpreted as Fama-French alpha or beta.
     """
     pe  = row.get("pe_ratio",    20)
     mg  = row.get("net_margin",  0.1)
@@ -40,20 +41,18 @@ def _ff5_decomposition(row: pd.Series) -> dict:
     mc  = row.get("log_mktcap", np.log(10e9))
     m12 = row.get("mom_12m",    0.05)
 
-    hml = 0.03 if (pe > 0 and 1/pe > 0.06) else (-0.02 if pe > 0 and 1/pe < 0.02 else 0)
-    rmw = 0.025 if mg > 0.20 else (-0.015 if mg < 0.08 else 0.005)
-    cma = 0.015 if rg < 0.05 else (-0.020 if rg > 0.20 else 0)
-    smb = 0.04  if mc < np.log(1e10) else (0.01 if mc < np.log(5e10) else -0.01)
-    mom = 0.03  if m12 > 0.20 else (-0.025 if m12 < -0.05 else 0.005)
-    alpha = round(hml + rmw + cma + mom + 0.005, 4)
+    value      = 0.03 if (pe > 0 and 1/pe > 0.06) else (-0.02 if pe > 0 and 1/pe < 0.02 else 0)
+    quality    = 0.025 if mg > 0.20 else (-0.015 if mg < 0.08 else 0.005)
+    investment = 0.015 if rg < 0.05 else (-0.020 if rg > 0.20 else 0)
+    size       = 0.04  if mc < np.log(1e10) else (0.01 if mc < np.log(5e10) else -0.01)
+    momentum   = 0.03  if m12 > 0.20 else (-0.025 if m12 < -0.05 else 0.005)
 
     return {
-        "hml": round(hml * 100, 2),
-        "rmw": round(rmw * 100, 2),
-        "cma": round(cma * 100, 2),
-        "smb": round(smb * 100, 2),
-        "mom": round(mom * 100, 2),
-        "alpha_est": round(alpha * 100, 2),
+        "value":      round(value      * 100, 2),
+        "quality":    round(quality    * 100, 2),
+        "investment": round(investment * 100, 2),
+        "size":       round(size       * 100, 2),
+        "momentum":   round(momentum   * 100, 2),
     }
 
 
@@ -161,9 +160,9 @@ def score_universe(
         inst_pct    = _fmt(stock.get("inst_ownership"))
         insider_pct = _fmt(stock.get("insider_ownership"))
 
-        signal   = _get_signal(composite)
-        ff5      = _ff5_decomposition(row)
-        reasons  = _build_reasons(row, signal, inst_pct, insider_pct)
+        signal         = _get_signal(composite)
+        factor_profile = _factor_profile(row)
+        reasons        = _build_reasons(row, signal, inst_pct, insider_pct)
 
         result = {
             "ticker":           ticker,
@@ -179,7 +178,7 @@ def score_universe(
             "fundamental_score":   round(fund_score * 100, 1),
             "inst_ownership_pct":  round(inst_pct * 100, 1) if inst_pct is not None else None,
             "insider_ownership_pct": round(insider_pct * 100, 1) if insider_pct is not None else None,
-            "ff5":                 ff5,
+            "factor_profile":      factor_profile,
             "buy_reasons":         reasons,
             "fundamentals": {
                 "pe_ratio":       _fmt(row.get("pe_ratio")),
