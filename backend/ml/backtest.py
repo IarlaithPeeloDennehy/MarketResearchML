@@ -274,6 +274,7 @@ def run_backtest(
             feature_rows    = all_feature_rows,
             return_labels   = all_return_labels,
             forward_returns = all_forward_returns,
+            features_df     = features_df,
         )
         model.save(model_name)
 
