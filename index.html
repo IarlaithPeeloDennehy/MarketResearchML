@@ -2317,7 +2317,7 @@ async function runBacktest(){
   btn.disabled=true;btn.textContent='RUNNING...';
   document.getElementById('btResults').innerHTML='<div class="bt-loading">Running walk-forward backtest — fetching historical returns...</div>';
   const tickers=runResults.scored.map(s=>s.t);
-  const data=await callBackend('/backtest',{tickers,profile:runResults.profileKey,lookback_years:+document.getElementById('lbSlider').value,forward_months:12});
+  const data=await callBackend('/backtest',{tickers,profile:runResults.profileKey,lookback_years:+document.getElementById('sp-lbSlider').value,forward_months:12});
   btn.disabled=false;btn.textContent='RUN BACKTEST ↗';
   if(!data||data.error){document.getElementById('btResults').innerHTML=`<div class="bt-error">${data?data.error:'Backtest failed — check backend connection.'}</div>`;return;}
   const m=data.metrics;
