@@ -1325,11 +1325,11 @@ async function callBackend(endpoint, payload) {
       credentials: 'include',
       body: JSON.stringify(payload),
     });
-    if (!r.ok) { console.warn('Backend HTTP ' + r.status); return null; }
-    return r.json();
+    if (!r.ok) { console.warn('Backend HTTP ' + r.status); return {ok:false, status:r.status, data:null}; }
+    return {ok:true, status:r.status, data: await r.json()};
   } catch(e) {
-    console.warn('Backend unreachable, using offline mode:', e.message);
-    return null;
+    console.warn('Backend unreachable:', e.message);
+    return {ok:false, status:0, data:null};
   }
 }
 
@@ -1628,7 +1628,6 @@ async function runAnalysis(){
   overlay.style.display='flex';
 
   const backendLive=await checkBackend();
-  updateBackendBadge(backendLive);
 
   let steps;
   if(backendLive){
@@ -1641,14 +1640,16 @@ async function runAnalysis(){
 
   stepsEl.innerHTML=steps.map((s,i)=>`<div class="ls" id="ls${i}"><div class="ls-dot"></div>${s}</div>`).join('');
 
-  let backendResults=null,cvAccuracy=null,cvIC=null,featureImportance=null;
+  let backendResults=null,cvAccuracy=null,cvIC=null,featureImportance=null,analyseStatus=null;
 
   if(backendLive){
     document.getElementById('ls0').className='ls active';
     await new Promise(r=>setTimeout(r,400));
     document.getElementById('ls0').className='ls done';
     document.getElementById('ls1').className='ls active';
-    backendResults=await callBackend('/analyse',{tickers,profile:profileKey,risk:riskKey,lookback_years:+document.getElementById('lbSlider').value,cv_folds:folds,lambda_reg:lambda});
+    const resp=await callBackend('/analyse',{tickers,profile:profileKey,risk:riskKey,lookback_years:+document.getElementById('lbSlider').value,cv_folds:folds,lambda_reg:lambda});
+    analyseStatus=resp.status;
+    backendResults=resp.ok?resp.data:null;
     for(let i=2;i<steps.length;i++){
       document.getElementById(`ls${i-1}`).className='ls done';
       document.getElementById(`ls${i}`).className='ls active';
@@ -1656,29 +1657,29 @@ async function runAnalysis(){
     }
     document.getElementById(`ls${steps.length-1}`).className='ls done';
     if(backendResults){cvAccuracy=backendResults.cv_accuracy;cvIC=backendResults.cv_ic??null;featureImportance=backendResults.feature_importance;}
-  } else {
-    for(let i=0;i<steps.length;i++){
-      if(i>0)document.getElementById(`ls${i-1}`).className='ls done';
-      document.getElementById(`ls${i}`).className='ls active';
-      await new Promise(r=>setTimeout(r,320+Math.random()*260));
-    }
-    document.getElementById(`ls${steps.length-1}`).className='ls done';
   }
   await new Promise(r=>setTimeout(r,180));
 
-  let scored;
-  if(backendResults&&backendResults.results&&backendResults.results.length){
-    scored=backendResults.results.map(br=>{
-      const local=ALL_STOCKS.find(s=>s.t===br.ticker)||{};
-      return{...local,t:br.ticker,n:br.name||local.n||br.ticker,s:br.sector||local.s||'Unknown',m:br.market||local.m||'US',p:br.last_price||local.p||0,score:br.composite_score/100,fundScore:br.fundamental_score/100,instPct:br.inst_ownership_pct,insiderPct:br.insider_ownership_pct,ff:mapFactorProfile(br.factor_profile),signal:br.signal,buyReasons:br.buy_reasons||[],pe:br.fundamentals?.pe_ratio||local.pe,roe:br.fundamentals?.roe!=null?br.fundamentals.roe/100:local.roe,mg:br.fundamentals?.net_margin!=null?br.fundamentals.net_margin/100:local.mg,de:br.fundamentals?.debt_equity||local.de,dy:br.fundamentals?.dividend_yield!=null?br.fundamentals.dividend_yield/100:local.dy,rg:br.fundamentals?.revenue_growth!=null?br.fundamentals.revenue_growth/100:local.rg,m12:br.fundamentals?.mom_12m!=null?br.fundamentals.mom_12m/100:local.m12,beta:br.fundamentals?.beta||local.beta,betaNote:br.beta_note||null,mc:br.market_cap_bn||local.mc,isLive:true};
-    });
-  } else {
-    scored=computeScores(selArr,profile,riskKey,lambda,useFF5);
-    scored.sort((a,b)=>b.score-a.score);
-    scored.forEach(s=>{s.signal=getSignal(s.score);s.buyReasons=isBuy(s.signal)?buildBuyReasons(s,profile):buildSellReasons(s,profile);s.isLive=false;});
+  // No live data → show an honest state. Never render stale/hardcoded prices.
+  if(!(backendResults&&backendResults.results&&backendResults.results.length)){
+    overlay.style.display='none';
+    updateBackendBadge(false);
+    if(analyseStatus===401||!Auth.isLoggedIn()){
+      _showToast('Log in to run a live analysis with real market data.', 'info');
+      Auth.openModal();
+    } else {
+      _showToast('Couldn’t fetch live market data right now — please try again in a moment.', 'err');
+    }
+    return;
   }
 
-  runResults={scored,profileKey,riskKey,profile,useFF5,folds,lambda,cvAccuracy,cvIC,featureImportance,backendLive};
+  const scored=backendResults.results.map(br=>{
+    const local=ALL_STOCKS.find(s=>s.t===br.ticker)||{};
+    return{...local,t:br.ticker,n:br.name||local.n||br.ticker,s:br.sector||local.s||'Unknown',m:br.market||local.m||'US',p:br.last_price??null,score:br.composite_score/100,fundScore:br.fundamental_score/100,instPct:br.inst_ownership_pct,insiderPct:br.insider_ownership_pct,ff:mapFactorProfile(br.factor_profile),signal:br.signal,buyReasons:br.buy_reasons||[],pe:br.fundamentals?.pe_ratio??local.pe,roe:br.fundamentals?.roe!=null?br.fundamentals.roe/100:local.roe,mg:br.fundamentals?.net_margin!=null?br.fundamentals.net_margin/100:local.mg,de:br.fundamentals?.debt_equity??local.de,dy:br.fundamentals?.dividend_yield!=null?br.fundamentals.dividend_yield/100:local.dy,rg:br.fundamentals?.revenue_growth!=null?br.fundamentals.revenue_growth/100:local.rg,m12:br.fundamentals?.mom_12m!=null?br.fundamentals.mom_12m/100:local.m12,beta:br.fundamentals?.beta??local.beta,betaNote:br.beta_note||null,mc:br.market_cap_bn??local.mc,isLive:true};
+  });
+
+  updateBackendBadge(true);
+  runResults={scored,profileKey,riskKey,profile,useFF5,folds,lambda,cvAccuracy,cvIC,featureImportance,backendLive:true};
   overlay.style.display='none';
   renderResults(runResults);
 }
@@ -1874,8 +1875,10 @@ function openDetail(ticker){
   const signal=r?r.signal:'—';
   const mc=s.m==='US'?'mkt-us':s.m==='UK'?'mkt-uk':'mkt-ie';
   const buy=isBuy(signal);
-  const livePrice=r&&r.p?r.p:s.p;
-  const priceStr=(s.m==='UK'?'£':'')+(s.m==='US'?'$':'')+(s.m==='IE'?'€':'')+livePrice.toLocaleString();
+  const hasPrice=r&&r.p!=null;
+  const priceStr=hasPrice
+    ? (s.m==='UK'?'£':'')+(s.m==='US'?'$':'')+(s.m==='IE'?'€':'')+r.p.toLocaleString()
+    : '—';
 
   const vClass=buy?'v-buy':signal==='HOLD'?'v-hold':'v-sell';
   const vLabel=buy?`BUY ${s.t}`:signal==='HOLD'?`HOLD ${s.t}`:`AVOID ${s.t}`;
@@ -2009,9 +2012,10 @@ async function runBacktest(){
   btn.disabled=true;btn.textContent='RUNNING...';
   document.getElementById('btResults').innerHTML='<div class="bt-loading">Running walk-forward backtest — fetching historical returns...</div>';
   const tickers=runResults.scored.map(s=>s.t);
-  const data=await callBackend('/backtest',{tickers,profile:runResults.profileKey,lookback_years:+document.getElementById('lbSlider').value,forward_months:12});
+  const resp=await callBackend('/backtest',{tickers,profile:runResults.profileKey,lookback_years:+document.getElementById('lbSlider').value,forward_months:12});
+  const data=resp.ok?resp.data:null;
   btn.disabled=false;btn.textContent='RUN BACKTEST ↗';
-  if(!data||data.error){document.getElementById('btResults').innerHTML=`<div class="bt-error">${data?data.error:'Backtest failed — check backend connection.'}</div>`;return;}
+  if(!data||data.error){document.getElementById('btResults').innerHTML=`<div class="bt-error">${data&&data.error?data.error:'Backtest failed — check backend connection.'}</div>`;return;}
   const m=data.metrics;
   if(!m||m.n_periods===0){document.getElementById('btResults').innerHTML='<div class="bt-error">Insufficient price history for backtest. Try adding more tickers or increasing the lookback period.</div>';return;}
   function metricColor(val,good,warn){return val>=good?'var(--green)':val>=warn?'var(--amber)':'var(--red)';}
