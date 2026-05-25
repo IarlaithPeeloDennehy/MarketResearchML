@@ -48,7 +48,7 @@ INSIGHTS_UNIVERSE = [
     "JPM",  "JNJ",  "PG",   "XOM",   "WMT",  "V",
     "UNH",  "HD",   "CVX",  "BRK-B",
     "SHEL.L", "AZN.L", "HSBA.L", "BP.L",
-    "RYAAY", "CRH.IR", "A5G.IR",
+    "RYAAY", "CRH", "A5G.IR",
 ]
 
 

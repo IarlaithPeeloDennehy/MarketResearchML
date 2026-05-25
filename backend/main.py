@@ -454,7 +454,7 @@ async def analyse(request: Request, req: AnalyseRequest, current_user: User = De
 
 @app.post("/backtest")
 @limiter.limit("3/minute")
-async def backtest(request: Request, req: BacktestRequest, current_user: User = Depends(get_current_user)):
+async def backtest(request: Request, req: BacktestRequest):
     """
     Runs walk-forward backtest AND trains the model on real returns.
     After this runs, /analyse will use the trained model automatically.

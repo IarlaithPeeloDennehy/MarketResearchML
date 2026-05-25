@@ -1130,6 +1130,156 @@ option{background:var(--bg);color:var(--text1)}
 .acct-delete-submit:hover{background:rgba(248,113,113,0.2)}
 .acct-delete-submit:disabled{opacity:0.4;cursor:not-allowed}
 .acct-delete-msg{font-size:11px;text-align:center;min-height:16px;color:#f87171}
+
+/* ═══════════════════ LAYOUT OVERRIDES — sidebar migrated to select page ═══════════════════ */
+.app{grid-template-columns:1fr!important}
+.sidebar,.sidebar-backdrop,.mobile-run-btn,.hamburger{display:none!important}
+
+/* ═══════════════════ WELCOME — full width centred ═══════════════════ */
+.welcome{max-width:920px;margin:0 auto;padding:80px 40px}
+@media(max-width:600px){.welcome{padding:48px 20px}}
+
+/* ═══════════════════ START BUTTON ═══════════════════ */
+.start-btn{
+  display:inline-flex;align-items:center;gap:10px;
+  padding:14px 32px;
+  background:linear-gradient(135deg,var(--primary) 0%,#5a9410 100%);
+  color:#0a0b14;border:none;border-radius:var(--r2);
+  font-family:'JetBrains Mono',monospace;font-size:13px;
+  letter-spacing:0.08em;font-weight:600;
+  cursor:pointer;transition:all 0.2s;
+  box-shadow:0 4px 24px var(--primary-glow);
+  margin-top:8px;
+}
+.start-btn:hover{transform:translateY(-2px);box-shadow:0 8px 32px rgba(132,204,22,0.45)}
+.start-btn:active{transform:scale(0.98)}
+
+/* ═══════════════════ BACK LINK ═══════════════════ */
+.back-link{
+  font-family:'JetBrains Mono',monospace;font-size:10px;
+  color:var(--text3);background:none;border:none;
+  cursor:pointer;letter-spacing:0.06em;
+  display:inline-flex;align-items:center;gap:6px;
+  padding:0;transition:color 0.15s;margin-bottom:16px;
+}
+.back-link:hover{color:var(--text1)}
+
+/* ═══════════════════ SELECT SCREEN ═══════════════════ */
+.select-screen{display:none}
+.select-inner{
+  display:grid;
+  grid-template-columns:1fr 360px;
+  min-height:calc(100vh - 56px);
+}
+.stock-browser{
+  padding:28px 32px;
+  overflow-y:auto;
+  max-height:calc(100vh - 56px);
+  border-right:1px solid var(--border);
+}
+.config-panel{
+  background:var(--surface);
+  padding:24px;
+  overflow-y:auto;
+  max-height:calc(100vh - 56px);
+  display:flex;flex-direction:column;
+}
+.browser-header{margin-bottom:20px}
+.browser-header h2{
+  font-family:'Inter',sans-serif;font-size:1.5rem;font-weight:600;
+  color:var(--text1);margin-bottom:4px;letter-spacing:-0.01em;
+}
+.browser-sub{
+  font-family:'JetBrains Mono',monospace;font-size:11px;
+  color:var(--text3);letter-spacing:0.08em;text-transform:uppercase;
+}
+.sp-market-tabs{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.sp-market-tab{
+  padding:7px 18px;border-radius:var(--r-pill);
+  border:1px solid var(--border2);background:transparent;
+  font-family:'JetBrains Mono',monospace;font-size:10px;
+  cursor:pointer;color:var(--text2);letter-spacing:0.04em;transition:all 0.18s;
+}
+.sp-market-tab:hover{background:var(--surface2);color:var(--text1)}
+.sp-market-tab.active{background:var(--primary-dim);color:var(--primary);border-color:var(--primary-glow)}
+.sp-search-wrap{position:relative;margin-bottom:20px}
+.sp-search-input{
+  width:100%;padding:11px 14px 11px 38px;
+  border-radius:var(--r2);border:1px solid var(--border2);
+  background:var(--surface2);
+  font-family:'Inter',sans-serif;font-size:13px;color:var(--text1);
+  outline:none;transition:all 0.2s;
+}
+.sp-search-input::placeholder{color:var(--text3)}
+.sp-search-input:focus{border-color:var(--primary-glow);background:var(--surface);box-shadow:0 0 0 3px var(--primary-dim)}
+.sp-search-icon{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:15px;height:15px;color:var(--text3);pointer-events:none}
+.stock-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(180px,1fr));
+  gap:16px;
+}
+.stock-card{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r3);padding:20px 20px;
+  cursor:pointer;transition:border-color 0.15s,transform 0.15s,box-shadow 0.15s;
+  position:relative;
+}
+.stock-card:hover{transform:translateY(-2px);border-color:var(--border2);box-shadow:0 6px 20px rgba(0,0,0,0.2)}
+.stock-card.selected{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary);background:var(--primary-dim)}
+.stock-card.selected .sc-ticker{color:var(--primary)}
+.sc-check{
+  position:absolute;top:10px;right:10px;
+  width:18px;height:18px;border-radius:50%;
+  border:1.5px solid var(--border2);background:transparent;
+  display:flex;align-items:center;justify-content:center;
+  transition:all 0.15s;flex-shrink:0;
+}
+.stock-card.selected .sc-check{background:var(--primary);border-color:var(--primary)}
+.sc-check-mark{width:8px;height:6px;display:none}
+.stock-card.selected .sc-check-mark{display:block}
+.sc-ticker{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;color:var(--text1);margin-bottom:2px;padding-right:22px}
+.sc-name{font-size:10px;color:var(--text3);margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sc-badges{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
+.sc-sector{font-family:'JetBrains Mono',monospace;font-size:8px;color:var(--text3);padding:2px 6px;border-radius:var(--r-pill);background:var(--surface3)}
+.sc-price{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text2);margin-top:6px}
+/* config panel */
+.cp-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.cp-title{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text2)}
+.cp-count{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--primary);background:var(--primary-dim);border:1px solid var(--primary-glow);padding:2px 9px;border-radius:var(--r-pill)}
+.sp-selected-list{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;min-height:28px}
+.sp-chip{
+  display:flex;align-items:center;gap:4px;
+  background:var(--surface2);border:1px solid var(--border2);
+  border-radius:var(--r-pill);padding:3px 6px 3px 10px;
+  font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text1);
+}
+.sp-chip button{background:none;border:none;color:var(--text3);cursor:pointer;font-size:14px;line-height:1;padding:0 2px;transition:color 0.15s}
+.sp-chip button:hover{color:var(--red)}
+.sp-divider{height:1px;background:var(--border);margin:14px 0}
+.cp-label{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:7px;display:block;margin-top:14px}
+.risk-tabs{display:flex;gap:6px}
+.risk-tab{
+  flex:1;padding:7px 4px;border-radius:var(--r2);
+  border:1px solid var(--border2);background:transparent;
+  font-family:'JetBrains Mono',monospace;font-size:10px;
+  cursor:pointer;text-align:center;color:var(--text2);
+  letter-spacing:0.04em;transition:all 0.18s;
+}
+.risk-tab:hover{background:var(--surface2);color:var(--text1)}
+.risk-tab.active{background:var(--primary-dim);color:var(--primary);border-color:var(--primary-glow)}
+.run-btn:disabled{opacity:0.4;cursor:not-allowed;transform:none!important;box-shadow:none!important}
+.sp-run-wrap{margin-top:auto;padding-top:16px}
+.sp-run-hint{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text3);text-align:center;margin-top:8px}
+
+@media(max-width:1023px){
+  .select-inner{grid-template-columns:1fr}
+  .stock-browser{border-right:none;border-bottom:1px solid var(--border);max-height:none}
+  .config-panel{border-left:none;max-height:none}
+}
+@media(max-width:600px){
+  .stock-browser{padding:16px}
+  .stock-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
+}
 </style>
 </head>
 <body>
@@ -1223,12 +1373,81 @@ option{background:var(--bg);color:var(--text1)}
   <button class="run-btn" id="runBtn">RUN ANALYSIS ↗</button>
 </aside>
 
+<!-- ═══════════════════ SELECT SCREEN ═══════════════════ -->
+<div id="selectScreen" class="select-screen">
+  <div class="select-inner">
+
+    <!-- LEFT: Stock Browser -->
+    <div class="stock-browser">
+      <div class="browser-header">
+        <h2>Build Your Universe</h2>
+        <p class="browser-sub">Select 3–40 stocks · US · UK · Ireland</p>
+      </div>
+      <div class="sp-market-tabs" id="sp-marketTabs">
+        <button class="sp-market-tab active" data-mkt="US">US</button>
+        <button class="sp-market-tab" data-mkt="UK">UK</button>
+        <button class="sp-market-tab" data-mkt="IE">Ireland</button>
+        <button class="sp-market-tab" data-mkt="ALL">All Markets</button>
+      </div>
+      <div class="sp-search-wrap">
+        <svg class="sp-search-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="4"/><path d="m10 10 3 3"/></svg>
+        <input class="sp-search-input" id="sp-searchInput" placeholder="Search ticker or company…" autocomplete="off">
+      </div>
+      <div class="stock-grid" id="sp-stockGrid"></div>
+    </div>
+
+    <!-- RIGHT: Config Panel -->
+    <div class="config-panel">
+      <div class="cp-header">
+        <span class="cp-title">Selected</span>
+        <span class="cp-count" id="sp-count">0 / 40</span>
+      </div>
+      <div class="sp-selected-list" id="sp-selectedList">
+        <span style="font-size:11px;color:var(--text3)">No stocks selected yet.</span>
+      </div>
+
+      <div class="sp-divider"></div>
+
+      <label class="cp-label" style="margin-top:0">INVESTOR PROFILE</label>
+      <select id="sp-profileSel">
+        <option value="value">Value (Buffett-style)</option>
+        <option value="growth">Growth (Cathie Wood-style)</option>
+        <option value="dividend">Dividend / Income</option>
+        <option value="momentum">Momentum Trader</option>
+        <option value="quality" selected>Quality at Reasonable Price</option>
+        <option value="macro">Global Macro</option>
+        <option value="activist">Activist / Deep Value</option>
+      </select>
+
+      <label class="cp-label">RISK LEVEL</label>
+      <div class="risk-tabs" id="sp-riskTabs">
+        <button class="risk-tab" data-risk="low">LOW</button>
+        <button class="risk-tab active" data-risk="medium">MEDIUM</button>
+        <button class="risk-tab" data-risk="high">HIGH</button>
+      </div>
+
+      <label class="cp-label">LOOKBACK PERIOD</label>
+      <div class="param-row">
+        <span class="param-label">Years of history</span>
+        <span class="param-value" id="sp-lbVal">3 yr</span>
+      </div>
+      <input type="range" min="1" max="5" value="3" id="sp-lbSlider">
+
+      <div class="sp-run-wrap">
+        <button class="run-btn" id="sp-runBtn" disabled onclick="runAnalysis()">RUN ANALYSIS ↗</button>
+        <p class="sp-run-hint" id="sp-runHint" style="display:none">Select at least 3 stocks</p>
+      </div>
+    </div>
+
+  </div>
+</div>
+
 <main class="main">
   <div class="welcome" id="welcomeScreen">
     <div class="w-eyebrow"><span class="w-eyebrow-dot"></span>System Ready &middot; NUMKT Ensemble v3.1</div>
     <div class="ins-hero" id="insightsHero" style="display:none"></div>
     <div class="w-headline">Select your universe,<br><em>run the model.</em></div>
-    <p style="font-family:'JetBrains Mono',monospace;font-size:15px;color:var(--text2);max-width:520px;line-height:1.6">Search and add stocks from the US, UK and Irish markets. The ensemble ML model layers fundamental factors and multi-factor analysis to produce clear BUY, HOLD and SELL signals.</p>
+    <p style="font-family:'JetBrains Mono',monospace;font-size:15px;color:var(--text2);max-width:520px;line-height:1.6">Build a custom universe from 80+ stocks across US, UK and Irish markets. Configure your profile, run the ensemble ML model, and get clear BUY, HOLD and SELL signals.</p>
     <div class="w-cards">
       <div class="w-card"><div class="w-num">80+</div>Stocks</div>
       <div class="w-card"><div class="w-num">3</div>Markets</div>
@@ -1236,6 +1455,7 @@ option{background:var(--bg);color:var(--text1)}
       <div class="w-card ac2"><div class="w-num">ML</div>Ensemble</div>
       <div class="w-card ac3"><div class="w-num">BUY</div>Signals</div>
     </div>
+    <button class="start-btn" onclick="showPage('select')">START ANALYSIS ↗</button>
   </div>
 
   <!-- Saved analyses panel — hidden until user is logged in -->
@@ -1250,6 +1470,7 @@ option{background:var(--bg);color:var(--text1)}
   </div>
 
   <div id="resultsScreen" style="display:none">
+    <button class="back-link" onclick="showPage('select')">← New Analysis</button>
     <!-- Save-this-analysis bar — hidden until user is logged in -->
     <div class="save-bar auth-hidden" id="saveBar">
       <span class="save-bar-label">Save</span>
@@ -1365,6 +1586,97 @@ function runAnalysisAndClose(){
   closeSidebar();
   runAnalysis();
 }
+
+/* ═══ PAGE NAVIGATION ═══ */
+let spActiveMkt='US';
+let spRiskKey='medium';
+
+function showPage(name){
+  document.getElementById('welcomeScreen').style.display=(name==='landing')?'':'none';
+  document.getElementById('selectScreen').style.display=(name==='select')?'block':'none';
+  document.getElementById('resultsScreen').style.display=(name==='results')?'block':'none';
+  document.querySelector('main.main').style.display=(name==='select')?'none':'';
+  const sp=document.getElementById('savedPanel');
+  if(sp)sp.style.display=(name==='landing')?'':'none';
+  if(name==='select'){renderStockGrid('');renderSelectedList();}
+}
+
+/* ═══ SELECT PAGE — STOCK GRID ═══ */
+function renderStockGrid(query){
+  const grid=document.getElementById('sp-stockGrid');
+  if(!grid)return;
+  let pool=spActiveMkt==='ALL'?ALL_STOCKS:ALL_STOCKS.filter(s=>s.m===spActiveMkt);
+  if(query){
+    const q=query.toLowerCase();
+    pool=pool.filter(s=>s.t.toLowerCase().includes(q)||s.n.toLowerCase().includes(q));
+  }
+  if(!pool.length){
+    grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:40px 0;font-family:\'JetBrains Mono\',monospace;font-size:11px;color:var(--text3)">No stocks match your search.</div>';
+    return;
+  }
+  grid.innerHTML=pool.map(s=>{
+    const mc=s.m==='US'?'mkt-us':s.m==='UK'?'mkt-uk':'mkt-ie';
+    const sel=selectedTickers.has(s.t);
+    return`<div class="stock-card${sel?' selected':''}" data-tk="${esc(s.t)}" onclick="toggleStock('${esc(s.t)}')">
+      <div class="sc-check"><svg class="sc-check-mark" viewBox="0 0 8 6" fill="none"><path d="M1 3L3 5L7 1" stroke="#0a0b14" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div class="sc-ticker">${esc(s.t)}</div>
+      <div class="sc-name">${esc(s.n)}</div>
+      <div class="sc-badges"><span class="sr-mkt ${mc}">${s.m}</span><span class="sc-sector">${esc(s.s)}</span></div>
+      <div class="sc-price">${s.m==='UK'?'£':s.m==='IE'?'€':'$'}${s.p.toLocaleString()} &middot; P/E ${s.pe}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderSelectedList(){
+  const list=document.getElementById('sp-selectedList');
+  const countEl=document.getElementById('sp-count');
+  const btn=document.getElementById('sp-runBtn');
+  const hint=document.getElementById('sp-runHint');
+  if(!list)return;
+  const arr=[...selectedTickers];
+  list.innerHTML=arr.length
+    ?arr.map(tk=>`<div class="sp-chip">${esc(tk)}<button onclick="toggleStock('${esc(tk)}')" title="Remove">×</button></div>`).join('')
+    :'<span style="font-size:11px;color:var(--text3)">No stocks selected yet.</span>';
+  if(countEl)countEl.textContent=`${arr.length} / 40`;
+  if(btn)btn.disabled=arr.length<3;
+  if(hint)hint.style.display=arr.length<3?'block':'none';
+}
+
+function toggleStock(tk){
+  if(selectedTickers.has(tk)){
+    selectedTickers.delete(tk);
+  } else if(selectedTickers.size<40){
+    selectedTickers.add(tk);
+  }
+  const card=document.querySelector(`#sp-stockGrid .stock-card[data-tk="${CSS.escape(tk)}"]`);
+  if(card){card.classList.toggle('selected',selectedTickers.has(tk));}
+  renderSelectedList();
+  initStockList();
+}
+
+/* ═══ SELECT PAGE EVENT LISTENERS ═══ */
+document.getElementById('sp-searchInput').addEventListener('input',e=>renderStockGrid(e.target.value.trim()));
+
+document.getElementById('sp-lbSlider').addEventListener('input',function(){
+  document.getElementById('sp-lbVal').textContent=this.value+' yr';
+});
+
+document.querySelectorAll('#sp-marketTabs .sp-market-tab').forEach(tab=>{
+  tab.onclick=()=>{
+    spActiveMkt=tab.dataset.mkt;
+    document.querySelectorAll('#sp-marketTabs .sp-market-tab').forEach(t=>t.classList.remove('active'));
+    tab.classList.add('active');
+    renderStockGrid(document.getElementById('sp-searchInput').value.trim());
+  };
+});
+
+document.querySelectorAll('#sp-riskTabs .risk-tab').forEach(tab=>{
+  tab.onclick=()=>{
+    spRiskKey=tab.dataset.risk;
+    document.querySelectorAll('#sp-riskTabs .risk-tab').forEach(t=>t.classList.remove('active'));
+    tab.classList.add('active');
+  };
+});
 
 /* ═══ STOCK UNIVERSE ═══ */
 const ALL_STOCKS=[
@@ -1614,8 +1926,8 @@ function buildSellReasons(s,profile){
 async function runAnalysis(){
   const selArr=ALL_STOCKS.filter(s=>selectedTickers.has(s.t));
   if(selArr.length<3){alert('Please select at least 3 stocks.');return;}
-  const profileKey=document.getElementById('profileSel').value;
-  const riskKey=document.getElementById('riskSel').value;
+  const profileKey=document.getElementById('sp-profileSel').value;
+  const riskKey=spRiskKey;
   const lambda=+document.getElementById('lamSlider').value/100;
   const folds=+document.getElementById('foldSlider').value;
   const useFF5=document.getElementById('quantToggle').checked;
@@ -1647,7 +1959,7 @@ async function runAnalysis(){
     await new Promise(r=>setTimeout(r,400));
     document.getElementById('ls0').className='ls done';
     document.getElementById('ls1').className='ls active';
-    const resp=await callBackend('/analyse',{tickers,profile:profileKey,risk:riskKey,lookback_years:+document.getElementById('lbSlider').value,cv_folds:folds,lambda_reg:lambda});
+    const resp=await callBackend('/analyse',{tickers,profile:profileKey,risk:riskKey,lookback_years:+document.getElementById('sp-lbSlider').value,cv_folds:folds,lambda_reg:lambda});
     analyseStatus=resp.status;
     backendResults=resp.ok?resp.data:null;
     for(let i=2;i<steps.length;i++){
@@ -1700,11 +2012,7 @@ function updateBackendBadge(live){
 
 function renderResults(R){
   const{scored,profileKey,riskKey,profile,useFF5,folds,lambda,cvIC}=R;
-  document.getElementById('welcomeScreen').style.display='none';
-  document.getElementById('resultsScreen').style.display='block';
-  // Saved-analyses panel belongs on the welcome screen, not above results
-  const savedPanel=document.getElementById('savedPanel');
-  if(savedPanel)savedPanel.style.display='none';
+  showPage('results');
 
   // Always refresh the save-name prefill so each new analysis gets its own default
   const nameInput = document.getElementById('saveNameInput');
@@ -2012,7 +2320,7 @@ async function runBacktest(){
   btn.disabled=true;btn.textContent='RUNNING...';
   document.getElementById('btResults').innerHTML='<div class="bt-loading">Running walk-forward backtest — fetching historical returns...</div>';
   const tickers=runResults.scored.map(s=>s.t);
-  const resp=await callBackend('/backtest',{tickers,profile:runResults.profileKey,lookback_years:+document.getElementById('lbSlider').value,forward_months:12});
+  const resp=await callBackend('/backtest',{tickers,profile:runResults.profileKey,lookback_years:+document.getElementById('sp-lbSlider').value,forward_months:12});
   const data=resp.ok?resp.data:null;
   btn.disabled=false;btn.textContent='RUN BACKTEST ↗';
   if(!data||data.error){document.getElementById('btResults').innerHTML=`<div class="bt-error">${data&&data.error?data.error:'Backtest failed — check backend connection.'}</div>`;return;}
@@ -2988,6 +3296,10 @@ const Saves = (() => {
 
   return { onLogin, onLogout, saveCurrentAnalysis, loadList, loadAnalysis, deleteAnalysis };
 })();
+
+/* ═══ INITIALISE ═══ */
+showPage('landing');
+initStockList();
 </script>
 
 <!-- ═══════════════════ AUTH MODAL ═══════════════════ -->
