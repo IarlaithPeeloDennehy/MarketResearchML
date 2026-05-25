@@ -1622,7 +1622,6 @@ function renderStockGrid(query){
       <div class="sc-ticker">${esc(s.t)}</div>
       <div class="sc-name">${esc(s.n)}</div>
       <div class="sc-badges"><span class="sr-mkt ${mc}">${s.m}</span><span class="sc-sector">${esc(s.s)}</span></div>
-      <div class="sc-price">${s.m==='UK'?'£':s.m==='IE'?'€':'$'}${s.p.toLocaleString()} &middot; P/E ${s.pe}</div>
     </div>`;
   }).join('');
 }
