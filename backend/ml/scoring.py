@@ -211,6 +211,10 @@ def score_universe(
             "beta_note":           "vs S&P 500 — may not reflect local market beta" if market in ("UK", "IE") else None,
             "factor_profile":      factor_profile,
             "buy_reasons":         reasons,
+            "analyst_buy":         stock.get("analyst_buy"),
+            "analyst_hold":        stock.get("analyst_hold"),
+            "analyst_sell":        stock.get("analyst_sell"),
+            "next_earnings_date":  stock.get("next_earnings_date"),
             "fundamentals": {
                 "pe_ratio":       _fmt(row.get("pe_ratio")),
                 "pb_ratio":       _fmt(row.get("pb_ratio")),

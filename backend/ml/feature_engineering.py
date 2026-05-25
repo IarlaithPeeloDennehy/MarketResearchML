@@ -1,23 +1,29 @@
 """
 feature_engineering.py
 ───────────────────────
-Turns raw Yahoo Finance data into a feature matrix suitable for sklearn.
+Turns raw stock data into a feature matrix suitable for sklearn.
 
 Features engineered:
-  Valuation:   pe_ratio, pb_ratio, ev_ebitda (if available)
-  Profitability: roe, net_margin, gross_margin
-  Growth:      revenue_growth, earnings_growth
-  Safety:      debt_equity, current_ratio
-  Momentum:    mom_1m, mom_3m, mom_6m, mom_12m (price return)
-  Volatility:  realised_vol_60d, beta
-  Size:        log_market_cap
-  Technical:   rsi_14, price_vs_52w_high
+  Valuation:      pe_ratio, forward_pe, pb_ratio, ev_ebitda
+  Profitability:  roe, net_margin, fcf_yield
+  Growth:         revenue_growth
+  Safety:         debt_equity, dividend_yield
+  Momentum:       mom_1m, mom_3m, mom_6m, mom_12m (price return)
+  Volatility:     vol_60d, beta
+  Size:           log_mktcap
+  Technical:      rsi_14, price_vs_52w_high
+  Earnings drift: earnings_surprise (avg of last 4 quarters)
 
 The target variable (for training) is:
   forward_return_12m — total return over the next 12 months
   We convert this to a binary label: 1 if stock beat the equal-weight
   universe median return (i.e., top half), 0 otherwise.
   This avoids label leakage from absolute return levels.
+
+Note: PRICE_FEATURE_COLS is the subset used for historical backtest windows
+to avoid look-ahead bias. The three new Finnhub-sourced features
+(ev_ebitda, fcf_yield, earnings_surprise) are snapshot-only — they are not
+added to PRICE_FEATURE_COLS and are treated exactly like PE/ROE/etc.
 """
 
 import pandas as pd
@@ -34,6 +40,8 @@ FEATURE_COLS = [
     "pb_ratio",
     "roe",
     "net_margin",
+    "fcf_yield",
+    "ev_ebitda",
     "revenue_growth",
     "debt_equity",
     "dividend_yield",
@@ -46,6 +54,7 @@ FEATURE_COLS = [
     "log_mktcap",
     "rsi_14",
     "price_vs_52w_high",
+    "earnings_surprise",
 ]
 
 # Subset of FEATURE_COLS that can be computed purely from price history.
@@ -129,9 +138,11 @@ def extract_snapshot_features(stock_data: dict) -> dict:
         "pe_ratio":        _safe(stock_data.get("pe") or (info.get("trailingPE"))),
         "forward_pe":      _safe(stock_data.get("forward_pe") or (info.get("forwardPE"))),
         "pb_ratio":        _safe(stock_data.get("pb") or (info.get("priceToBook"))),
+        "ev_ebitda":       _safe(stock_data.get("ev_ebitda") or info.get("ev_ebitda")),
         # --- Profitability ---
         "roe":             _safe(stock_data.get("roe") or (info.get("returnOnEquity"))),
         "net_margin":      _safe(stock_data.get("net_margin") or (info.get("profitMargins"))),
+        "fcf_yield":       _safe(stock_data.get("fcf_yield") or info.get("fcf_yield")),
         # --- Growth ---
         "revenue_growth":  _safe(stock_data.get("revenue_growth") or (info.get("revenueGrowth"))),
         # --- Safety ---
@@ -141,6 +152,10 @@ def extract_snapshot_features(stock_data: dict) -> dict:
         "beta":            _safe(stock_data.get("beta") or (info.get("beta"))),
         # --- Size ---
         "log_mktcap":      np.log(max(_safe(info.get("marketCap", 0)), 1e6)),
+        # --- Earnings drift (PEAD) — NaN for non-Finnhub stocks, filled with median ---
+        "earnings_surprise": _safe(
+            stock_data.get("earnings_surprise_avg") or info.get("earnings_surprise_avg")
+        ),
     }
 
     # Momentum (requires price history)

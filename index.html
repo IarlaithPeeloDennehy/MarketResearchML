@@ -491,6 +491,9 @@ option{background:var(--bg);color:var(--text1)}
 }
 .conf-bar{height:2px;border-radius:2px;background:var(--border);margin-top:3px;overflow:hidden}
 .conf-fill{height:100%;border-radius:2px}
+.earnings-badge{font-family:'JetBrains Mono',monospace;font-size:8px;background:rgba(240,160,48,0.12);color:var(--amber);border:1px solid rgba(240,160,48,0.3);padding:2px 5px;border-radius:var(--r-pill);margin-left:4px;vertical-align:middle;white-space:nowrap}
+.analyst-row{font-size:10px;color:var(--text3);margin-top:2px;white-space:nowrap}
+.analyst-row .ab{color:var(--green)}.analyst-row .ah{color:var(--text2)}.analyst-row .as{color:var(--red)}
 
 /* ═══════════════════ CHARTS ═══════════════════ */
 .chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:1.5rem}
@@ -1986,7 +1989,13 @@ async function runAnalysis(){
 
   const scored=backendResults.results.map(br=>{
     const local=ALL_STOCKS.find(s=>s.t===br.ticker)||{};
-    return{...local,t:br.ticker,n:br.name||local.n||br.ticker,s:br.sector||local.s||'Unknown',m:br.market||local.m||'US',p:br.last_price??null,score:br.composite_score/100,fundScore:br.fundamental_score/100,instPct:br.inst_ownership_pct,insiderPct:br.insider_ownership_pct,ff:mapFactorProfile(br.factor_profile),signal:br.signal,buyReasons:br.buy_reasons||[],pe:br.fundamentals?.pe_ratio??local.pe,roe:br.fundamentals?.roe!=null?br.fundamentals.roe/100:local.roe,mg:br.fundamentals?.net_margin!=null?br.fundamentals.net_margin/100:local.mg,de:br.fundamentals?.debt_equity??local.de,dy:br.fundamentals?.dividend_yield!=null?br.fundamentals.dividend_yield/100:local.dy,rg:br.fundamentals?.revenue_growth!=null?br.fundamentals.revenue_growth/100:local.rg,m12:br.fundamentals?.mom_12m!=null?br.fundamentals.mom_12m/100:local.m12,beta:br.fundamentals?.beta??local.beta,betaNote:br.beta_note||null,mc:br.market_cap_bn??local.mc,isLive:true};
+    // Days until next earnings (null if not available or already passed)
+    let daysToEarnings=null;
+    if(br.next_earnings_date){
+      const diff=Math.round((new Date(br.next_earnings_date)-Date.now())/(1000*60*60*24));
+      if(diff>=0&&diff<=90)daysToEarnings=diff;
+    }
+    return{...local,t:br.ticker,n:br.name||local.n||br.ticker,s:br.sector||local.s||'Unknown',m:br.market||local.m||'US',p:br.last_price??null,score:br.composite_score/100,fundScore:br.fundamental_score/100,instPct:br.inst_ownership_pct,insiderPct:br.insider_ownership_pct,ff:mapFactorProfile(br.factor_profile),signal:br.signal,buyReasons:br.buy_reasons||[],pe:br.fundamentals?.pe_ratio??local.pe,roe:br.fundamentals?.roe!=null?br.fundamentals.roe/100:local.roe,mg:br.fundamentals?.net_margin!=null?br.fundamentals.net_margin/100:local.mg,de:br.fundamentals?.debt_equity??local.de,dy:br.fundamentals?.dividend_yield!=null?br.fundamentals.dividend_yield/100:local.dy,rg:br.fundamentals?.revenue_growth!=null?br.fundamentals.revenue_growth/100:local.rg,m12:br.fundamentals?.mom_12m!=null?br.fundamentals.mom_12m/100:local.m12,beta:br.fundamentals?.beta??local.beta,betaNote:br.beta_note||null,mc:br.market_cap_bn??local.mc,isLive:true,analystBuy:br.analyst_buy??null,analystHold:br.analyst_hold??null,analystSell:br.analyst_sell??null,daysToEarnings};
   });
 
   updateBackendBadge(true);
@@ -2091,20 +2100,23 @@ function renderResults(R){
     </div>`;
 
   document.getElementById('recTable').innerHTML=`
-    <div class="rec-head"><span>Ticker</span><span>Company</span><span>Score</span><span>P/E</span><span>ROE</span><span>Beta</span><span>Inst %</span><span>Signal</span></div>
+    <div class="rec-head"><span>Ticker</span><span>Company</span><span>Score</span><span>P/E</span><span>ROE</span><span>Beta</span><span>Analysts</span><span>Signal</span></div>
     ${scored.map(s=>{
       const mc=s.m==='US'?'mkt-us':s.m==='UK'?'mkt-uk':'mkt-ie';
       const buyRow=isBuy(s.signal)?'is-buy':'';
-      const instStr=s.instPct!=null?s.instPct+'%':'—';
-      const instColor=s.instPct!=null?(s.instPct>70?'var(--green)':s.instPct>40?'var(--text2)':'var(--text3)'):'var(--text3)';
+      const earningsBadge=s.daysToEarnings!=null
+        ?`<span class="earnings-badge" title="Next earnings report">⚠ ${s.daysToEarnings===0?'Today':s.daysToEarnings+'d'}</span>`:'';
+      const analystStr=(s.analystBuy!=null||s.analystHold!=null||s.analystSell!=null)
+        ?`<div class="analyst-row"><span class="ab">${s.analystBuy??0}B</span> · <span class="ah">${s.analystHold??0}H</span> · <span class="as">${s.analystSell??0}S</span></div>`
+        :`<div class="analyst-row" style="color:var(--text3)">—</div>`;
       return`<div class="rec-row ${buyRow}" data-ticker="${s.t}">
         <span class="rt-ticker">${s.t} <span class="sr-mkt ${mc}" style="font-size:8px;padding:1px 4px">${s.m}</span>${s.isLive?'<span style="font-size:8px;color:var(--teal);margin-left:3px" title="Live">●</span>':''}</span>
-        <span class="rt-name">${esc(s.n)}${isBuy(s.signal)?'<span class="buy-tag">BUY</span>':''}</span>
+        <span class="rt-name">${esc(s.n)}${isBuy(s.signal)?'<span class="buy-tag">BUY</span>':''}${earningsBadge}</span>
         <span><div class="rt-num">${(s.score*100).toFixed(0)}%</div><div class="conf-bar"><div class="conf-fill" style="width:${(s.score*100).toFixed(0)}%;background:${s.score>0.65?'var(--green)':s.score>0.45?'var(--amber)':'var(--red)'}"></div></div></span>
         <span class="rt-num">${s.pe>90?'N/A':s.pe+'x'}</span>
         <span class="rt-num">${(s.roe*100).toFixed(0)}%</span>
         <span class="rt-num">${s.beta.toFixed(1)}</span>
-        <span class="rt-num" style="color:${instColor}">${instStr}</span>
+        <span>${analystStr}</span>
         <span><span class="sig-pill ${pillCls(s.signal)}">${s.signal}</span></span>
       </div>`;
     }).join('')}`;
@@ -3117,6 +3129,8 @@ const Saves = (() => {
           dy: s.dy, rg: s.rg, m12: s.m12, beta: s.beta, mc: s.mc,
           instPct: s.instPct ?? null, insiderPct: s.insiderPct ?? null,
           isLive: s.isLive,
+          analystBuy: s.analystBuy ?? null, analystHold: s.analystHold ?? null,
+          analystSell: s.analystSell ?? null, daysToEarnings: s.daysToEarnings ?? null,
         })),
         cvAccuracy:        runResults.cvAccuracy,
         cvIC:              runResults.cvIC,
@@ -3210,6 +3224,8 @@ const Saves = (() => {
           de: s.de ?? null, dy: s.dy ?? null,   rg: s.rg ?? null,
           m12: s.m12 ?? null, beta: s.beta ?? null, mc: s.mc ?? null,
           instPct: s.instPct ?? null, insiderPct: s.insiderPct ?? null,
+          analystBuy: s.analystBuy ?? null, analystHold: s.analystHold ?? null,
+          analystSell: s.analystSell ?? null, daysToEarnings: s.daysToEarnings ?? null,
         })),
         profileKey:        res.profileKey        || item.profile,
         riskKey:           res.riskKey           || item.risk,
