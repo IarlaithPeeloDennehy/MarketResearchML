@@ -26,12 +26,24 @@ to avoid look-ahead bias. The three new Finnhub-sourced features
 added to PRICE_FEATURE_COLS and are treated exactly like PE/ROE/etc.
 """
 
+import re
 import pandas as pd
 import numpy as np
 from typing import Optional
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def safe_ticker_filename(ticker: str) -> str:
+    """Filesystem-safe stem for a ticker symbol.
+    Strips everything except letters, digits, dots, and hyphens;
+    then maps dots and hyphens to underscores.
+    Used consistently by data_fetcher (write) and model (read) so
+    cache paths always match.
+    """
+    clean = re.sub(r"[^A-Za-z0-9.\-]", "", ticker)
+    return clean.replace(".", "_").replace("-", "_") or "UNKNOWN"
 
 # Features used as model inputs (must match what model.py expects)
 FEATURE_COLS = [

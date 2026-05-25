@@ -18,7 +18,6 @@ Finnhub notes:
     next_earnings_date, analyst_buy, analyst_hold, analyst_sell
 """
 
-import re
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -36,6 +35,8 @@ try:
     _FINNHUB_AVAILABLE = True
 except ImportError:
     _FINNHUB_AVAILABLE = False
+
+from .feature_engineering import safe_ticker_filename
 
 logger = logging.getLogger(__name__)
 
@@ -56,17 +57,11 @@ _executor = ThreadPoolExecutor(max_workers=1)
 
 # ── Cache helpers ──────────────────────────────────────────────────────────
 
-def _safe_filename(ticker: str) -> str:
-    """Strip any character that isn't a letter, digit, dot, or hyphen,
-    then replace dots and hyphens with underscores for filesystem safety."""
-    clean = re.sub(r"[^A-Za-z0-9.\-]", "", ticker)
-    return clean.replace(".", "_").replace("-", "_") or "UNKNOWN"
-
 def _price_cache_path(ticker: str) -> Path:
-    return PRICE_DIR / f"{_safe_filename(ticker)}.parquet"
+    return PRICE_DIR / f"{safe_ticker_filename(ticker)}.parquet"
 
 def _info_cache_path(ticker: str) -> Path:
-    return INFO_DIR / f"{_safe_filename(ticker)}.json"
+    return INFO_DIR / f"{safe_ticker_filename(ticker)}.json"
 
 def _cache_is_fresh(path: Path) -> bool:
     if not path.exists():
@@ -124,16 +119,34 @@ def _is_us_ticker(ticker: str) -> bool:
     return not (t.endswith(".L") or t.endswith(".IR"))
 
 _fh_client = None
+_fh_init_logged = False   # only log the config state once per process
 
 def _get_finnhub_client():
-    global _fh_client
+    global _fh_client, _fh_init_logged
     if _fh_client is not None:
         return _fh_client
     key = os.environ.get("FINNHUB_API_KEY", "").strip()
-    if not key or not _FINNHUB_AVAILABLE:
+    if not key:
+        if not _fh_init_logged:
+            logger.warning(
+                "FINNHUB_API_KEY is not set — all tickers will use Yahoo Finance. "
+                "Set the key in your Render environment to enable Finnhub."
+            )
+            _fh_init_logged = True
+        return None
+    if not _FINNHUB_AVAILABLE:
+        if not _fh_init_logged:
+            logger.warning("finnhub-python package not installed — falling back to Yahoo Finance.")
+            _fh_init_logged = True
         return None
     try:
         _fh_client = _finnhub_lib.Client(api_key=key)
+        if not _fh_init_logged:
+            logger.info(
+                "Finnhub client initialised — US tickers will use the official Finnhub API. "
+                "UK/IE tickers (.L / .IR) remain on Yahoo Finance."
+            )
+            _fh_init_logged = True
         return _fh_client
     except Exception as e:
         logger.warning(f"Finnhub client init failed: {e}")
@@ -330,10 +343,13 @@ def _fetch_one(ticker: str, start: str, end: str) -> dict | None:
                 _save_prices(ticker, result["prices"])
                 _save_info(ticker, result["info"])
                 return result
-            logger.warning(f"{ticker}: Finnhub failed, falling back to Yahoo Finance")
+            logger.warning(f"{ticker}: Finnhub fetch failed — falling back to Yahoo Finance")
+        else:
+            logger.info(f"{ticker}: no Finnhub client — fetching from Yahoo Finance")
 
     # ── yfinance path (UK/IE tickers, or Finnhub fallback) ─────────────────
-    logger.info(f"{ticker}: fetching from Yahoo Finance (start={start})")
+    source = "Yahoo Finance (UK/IE)" if not _is_us_ticker(ticker) else "Yahoo Finance (fallback)"
+    logger.info(f"{ticker}: fetching from {source} (start={start})")
 
     for attempt in range(3):
         try:
@@ -492,8 +508,14 @@ async def fetch_multiple_stocks(
         else:
             logger.warning(f"Dropping {ticker} — no data available")
 
-    logger.info(f"Fetched {len(out)}/{len(tickers)} tickers "
-                f"({uncached_count} fresh, {len(out)-uncached_count} from cache)")
+    fh_count  = sum(1 for t in out if _is_us_ticker(t))
+    yf_count  = sum(1 for t in out if not _is_us_ticker(t))
+    fh_label  = "Finnhub" if _get_finnhub_client() is not None else "Yahoo Finance (no Finnhub key)"
+    logger.info(
+        f"Data fetch complete: {len(out)}/{len(tickers)} tickers loaded — "
+        f"{uncached_count} fresh, {len(out)-uncached_count} from cache | "
+        f"US ({fh_count}): {fh_label} | UK/IE ({yf_count}): Yahoo Finance"
+    )
     return out, uncached_count
 
 

@@ -51,7 +51,7 @@ import logging
 from pathlib import Path
 from datetime import datetime
 
-from .feature_engineering import FEATURE_COLS, PRICE_FEATURE_COLS
+from .feature_engineering import FEATURE_COLS, PRICE_FEATURE_COLS, safe_ticker_filename
 
 logger = logging.getLogger(__name__)
 
@@ -282,7 +282,7 @@ class NUMKTEnsemble:
         anchor_cached = [
             t for t in _ANCHOR_TICKERS
             if t not in tickers
-            and (PRICE_DIR / f"{t.replace('.', '_').replace('/', '_')}.parquet").exists()
+            and (PRICE_DIR / f"{safe_ticker_filename(t)}.parquet").exists()
         ]
         if anchor_cached:
             logger.info(
@@ -418,8 +418,7 @@ class NUMKTEnsemble:
         price_series: dict[str, pd.Series] = {}
         info_series:  dict[str, dict]      = {}
         for ticker in tickers:
-            safe = ticker.replace(".", "_").replace("/", "_")
-            path = PRICE_DIR / f"{safe}.parquet"
+            path = PRICE_DIR / f"{safe_ticker_filename(ticker)}.parquet"
             if not path.exists():
                 continue
             try:
@@ -429,7 +428,7 @@ class NUMKTEnsemble:
             except Exception as e:
                 logger.warning(f"Could not load price cache for {ticker}: {e}")
             # Load cached fundamental snapshot (today's values — used as proxy)
-            info_path = INFO_DIR / f"{safe}.json"
+            info_path = INFO_DIR / f"{safe_ticker_filename(ticker)}.json"
             if info_path.exists():
                 try:
                     with open(info_path) as _f:
@@ -510,6 +509,18 @@ class NUMKTEnsemble:
                     snap["dividend_yield"] = _fi("dividendYield")
                     snap["beta"]           = _fi("beta")
                     snap["log_mktcap"]     = np.log(max(_fi("marketCap", 1e6), 1e6))
+                    # Finnhub-sourced features (NaN for yfinance-only stocks)
+                    snap["fcf_yield"]         = _fi("fcf_yield")
+                    snap["ev_ebitda"]         = _fi("ev_ebitda")
+                    snap["earnings_surprise"] = _fi("earnings_surprise_avg")
+                    try:
+                        ab = int(info.get("analyst_buy")  or 0)
+                        ah = int(info.get("analyst_hold") or 0)
+                        as_ = int(info.get("analyst_sell") or 0)
+                        total = ab + ah + as_
+                        snap["analyst_consensus"] = (ab - as_) / total if total >= 3 else np.nan
+                    except (TypeError, ValueError):
+                        snap["analyst_consensus"] = np.nan
 
                 raw_snaps[ticker] = snap
 
@@ -604,8 +615,7 @@ class NUMKTEnsemble:
         # Using 253 bars (252 + current day) to match the mom_12m definition.
         fwd_returns: dict[str, float] = {}
         for ticker in tickers:
-            safe = ticker.replace(".", "_").replace("/", "_")
-            path = PRICE_DIR / f"{safe}.parquet"
+            path = PRICE_DIR / f"{safe_ticker_filename(ticker)}.parquet"
             if not path.exists():
                 continue
             try:
