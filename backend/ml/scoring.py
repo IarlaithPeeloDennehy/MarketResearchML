@@ -40,9 +40,21 @@ def _factor_profile(row: pd.Series) -> dict:
     rg  = row.get("revenue_growth", 0.05)
     mc  = row.get("log_mktcap", np.log(10e9))
     m12 = row.get("mom_12m",    0.05)
+    ev  = row.get("ev_ebitda")
+    fcf = row.get("fcf_yield")
 
     value      = 0.03 if (pe > 0 and 1/pe > 0.06) else (-0.02 if pe > 0 and 1/pe < 0.02 else 0)
-    quality    = 0.025 if mg > 0.20 else (-0.015 if mg < 0.08 else 0.005)
+    # EV/EBITDA supplements PE: cheap on cash earnings (EV < 12x) lifts value score
+    if ev and ev > 0:
+        value += 0.01 if ev < 12 else (-0.01 if ev > 22 else 0)
+
+    # FCF yield lifts quality: real cash generation > accrual-based earnings
+    quality = 0.025 if mg > 0.20 else (-0.015 if mg < 0.08 else 0.005)
+    if fcf and fcf > 0.04:
+        quality += 0.01
+    elif fcf is not None and fcf < 0:
+        quality -= 0.01
+
     investment = 0.015 if rg < 0.05 else (-0.020 if rg > 0.20 else 0)
     size       = 0.04  if mc < np.log(1e10) else (0.01 if mc < np.log(5e10) else -0.01)
     momentum   = 0.03  if m12 > 0.20 else (-0.025 if m12 < -0.05 else 0.005)
@@ -68,19 +80,30 @@ def _get_signal(score: float, thresholds: dict | None = None) -> str:
 
 def _bull_points(row: pd.Series, inst_pct: float | None, insider_pct: float | None) -> list[str]:
     """Plain-English reasons the stock could outperform."""
-    pe  = row.get("pe_ratio")
-    roe = row.get("roe")
-    mg  = row.get("net_margin")
-    de  = row.get("debt_equity")
-    rg  = row.get("revenue_growth")
-    m12 = row.get("mom_12m")
-    dy  = row.get("dividend_yield")
+    pe       = row.get("pe_ratio")
+    roe      = row.get("roe")
+    mg       = row.get("net_margin")
+    de       = row.get("debt_equity")
+    rg       = row.get("revenue_growth")
+    m12      = row.get("mom_12m")
+    dy       = row.get("dividend_yield")
+    ev       = row.get("ev_ebitda")
+    fcf      = row.get("fcf_yield")
+    surprise = row.get("earnings_surprise")
+    ab       = int(row.get("analyst_buy")  or 0)
+    ah       = int(row.get("analyst_hold") or 0)
+    as_      = int(row.get("analyst_sell") or 0)
+    total_r  = ab + ah + as_
 
     points = []
     if pe and pe < 18:
         points.append(f"Attractive valuation at P/E {pe:.1f}x — below market average")
+    if ev and 0 < ev < 12:
+        points.append(f"Cheap at {ev:.1f}x EV/EBITDA — strong value across the capital structure")
     if roe and roe > 0.20:
         points.append(f"Strong ROE of {roe*100:.0f}% — durable competitive advantage")
+    if fcf and fcf > 0.04:
+        points.append(f"FCF yield of {fcf*100:.1f}% — real cash generation backing the valuation")
     if mg and mg > 0.15:
         points.append(f"High net margin of {mg*100:.1f}% — pricing power and scalability")
     if de and de < 0.5:
@@ -89,8 +112,12 @@ def _bull_points(row: pd.Series, inst_pct: float | None, insider_pct: float | No
         points.append(f"Revenue growing at {rg*100:.0f}% — compounding top-line momentum")
     if m12 and m12 > 0.15:
         points.append(f"Strong 12M momentum (+{m12*100:.0f}%)")
+    if surprise and surprise > 0.15:
+        points.append("Consistently beating earnings estimates — analyst upgrades likely to follow")
     if dy and dy > 0.03:
         points.append(f"Dividend yield of {dy*100:.1f}% — income with quality backing")
+    if total_r >= 3 and ab / total_r > 0.65:
+        points.append(f"{ab} of {total_r} analysts rate BUY — broad professional conviction")
     if inst_pct and inst_pct > 0.70:
         points.append(f"{inst_pct*100:.0f}% institutional ownership — strong professional conviction")
     if insider_pct and insider_pct > 0.10:
@@ -100,15 +127,24 @@ def _bull_points(row: pd.Series, inst_pct: float | None, insider_pct: float | No
 
 def _bear_points(row: pd.Series, inst_pct: float | None) -> list[str]:
     """Plain-English risks that could hold the stock back."""
-    pe  = row.get("pe_ratio")
-    mg  = row.get("net_margin")
-    de  = row.get("debt_equity")
-    rg  = row.get("revenue_growth")
-    m12 = row.get("mom_12m")
+    pe       = row.get("pe_ratio")
+    mg       = row.get("net_margin")
+    de       = row.get("debt_equity")
+    rg       = row.get("revenue_growth")
+    m12      = row.get("mom_12m")
+    ev       = row.get("ev_ebitda")
+    fcf      = row.get("fcf_yield")
+    surprise = row.get("earnings_surprise")
+    ab       = int(row.get("analyst_buy")  or 0)
+    ah       = int(row.get("analyst_hold") or 0)
+    as_      = int(row.get("analyst_sell") or 0)
+    total_r  = ab + ah + as_
 
     points = []
     if pe and pe > 50:
         points.append(f"Stretched P/E of {pe:.0f}x requires perfect execution")
+    if ev and ev > 25:
+        points.append(f"Premium at {ev:.1f}x EV/EBITDA — limited margin of safety on cash earnings")
     if m12 and m12 < -0.08:
         points.append(f"Negative 12M trend ({m12*100:.0f}%) — market expressing concern")
     if de and de > 2.0:
@@ -117,6 +153,12 @@ def _bear_points(row: pd.Series, inst_pct: float | None) -> list[str]:
         points.append(f"Declining revenues ({rg*100:.0f}%) — structural headwinds")
     if mg and mg < 0.05:
         points.append(f"Very thin margins ({mg*100:.1f}%) — limited operational resilience")
+    if fcf is not None and fcf < 0:
+        points.append("Negative free cash flow — earnings quality is low; reliant on external financing")
+    if surprise and surprise < -0.15:
+        points.append("Consistently missing earnings estimates — confidence in forward guidance is low")
+    if total_r >= 3 and as_ / total_r > 0.30:
+        points.append(f"{as_} of {total_r} analysts rate SELL — notable professional skepticism")
     if inst_pct and inst_pct < 0.30:
         points.append(f"Low institutional interest ({inst_pct*100:.0f}%) — limited professional coverage")
     return points
@@ -175,17 +217,27 @@ def score_universe(
 
         fund_score = float(proba[i])
 
+        # Real ownership + analyst data from fetcher
+        stock = raw_data.get(ticker, {})
+
         # Risk penalty for high-beta stocks
         beta = row.get("beta", 1.0) or 1.0
         risk_penalty = 0.0
         if risk == "low"    and beta > 0.8:  risk_penalty = (beta - 0.8) * 0.15
         if risk == "medium" and beta > 1.5:  risk_penalty = (beta - 1.5) * 0.10
 
-        # Composite score: ML probability minus risk penalty only
-        composite = float(np.clip(fund_score - risk_penalty, 0.05, 0.97))
+        # Analyst consensus boost: ±5% based on buy/sell ratio (requires ≥3 ratings)
+        analyst_buy  = int(stock.get("analyst_buy")  or 0)
+        analyst_hold = int(stock.get("analyst_hold") or 0)
+        analyst_sell = int(stock.get("analyst_sell") or 0)
+        total_ratings = analyst_buy + analyst_hold + analyst_sell
+        analyst_boost = 0.0
+        if total_ratings >= 3:
+            buy_ratio = analyst_buy / total_ratings
+            # buy_ratio of 1.0 → +5%, 0.5 (neutral) → 0%, 0.0 → -5%
+            analyst_boost = (buy_ratio - 0.5) * 0.10
 
-        # Real ownership data from Yahoo Finance
-        stock = raw_data.get(ticker, {})
+        composite = float(np.clip(fund_score - risk_penalty + analyst_boost, 0.05, 0.97))
         inst_pct    = _fmt(stock.get("inst_ownership"))
         insider_pct = _fmt(stock.get("insider_ownership"))
 

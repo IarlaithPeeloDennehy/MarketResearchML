@@ -55,6 +55,8 @@ FEATURE_COLS = [
     "rsi_14",
     "price_vs_52w_high",
     "earnings_surprise",
+    # Derived from Finnhub analyst counts: (buy-sell)/(buy+hold+sell), NaN if <3 ratings
+    "analyst_consensus",
 ]
 
 # Subset of FEATURE_COLS that can be computed purely from price history.
@@ -113,6 +115,19 @@ def _realised_vol(prices: pd.Series, days: int = 60) -> float:
     return round(float(returns.std() * np.sqrt(252)), 6)
 
 
+def _analyst_consensus(buy, hold, sell) -> float:
+    """Normalized analyst sentiment: (buy-sell)/(buy+hold+sell) → [-1, 1].
+    Returns NaN when fewer than 3 total ratings to avoid noise from thin coverage."""
+    try:
+        b, h, s = int(buy or 0), int(hold or 0), int(sell or 0)
+        total = b + h + s
+        if total < 3:
+            return np.nan
+        return (b - s) / total
+    except (TypeError, ValueError):
+        return np.nan
+
+
 def extract_snapshot_features(stock_data: dict) -> dict:
     """
     Extract a single feature row (today's snapshot) for one stock.
@@ -156,6 +171,16 @@ def extract_snapshot_features(stock_data: dict) -> dict:
         "earnings_surprise": _safe(
             stock_data.get("earnings_surprise_avg") or info.get("earnings_surprise_avg")
         ),
+        # --- Analyst consensus — NaN when <3 ratings (filled with cross-sectional median) ---
+        "analyst_consensus": _analyst_consensus(
+            stock_data.get("analyst_buy")  or info.get("analyst_buy"),
+            stock_data.get("analyst_hold") or info.get("analyst_hold"),
+            stock_data.get("analyst_sell") or info.get("analyst_sell"),
+        ),
+        # Raw analyst counts — metadata for scoring thesis (not ML features)
+        "analyst_buy":  stock_data.get("analyst_buy")  or info.get("analyst_buy"),
+        "analyst_hold": stock_data.get("analyst_hold") or info.get("analyst_hold"),
+        "analyst_sell": stock_data.get("analyst_sell") or info.get("analyst_sell"),
     }
 
     # Momentum (requires price history)

@@ -75,8 +75,8 @@ _ANCHOR_TICKERS = [
 ]
 
 # Minimum real labelled rows before we trust the model.
-# Below this the dataset is too thin and we log a loud warning.
-MIN_REAL_ROWS = 30
+# With 21 features, 1.5 samples/feature is too thin — 60 gives ~3 samples/feature.
+MIN_REAL_ROWS = 60
 
 # Forward-return horizons used for synthetic label generation (trading days).
 # Multiple horizons increase the number of labelled observations we can

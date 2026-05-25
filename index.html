@@ -1215,6 +1215,17 @@ option{background:var(--bg);color:var(--text1)}
 }
 .sp-search-input::placeholder{color:var(--text3)}
 .sp-search-input:focus{border-color:var(--primary-glow);background:var(--surface);box-shadow:0 0 0 3px var(--primary-dim)}
+.sp-search-results{margin-top:16px;border-top:1px solid var(--border);padding-top:14px;display:none}
+.sp-search-results-label{font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;letter-spacing:0.08em;margin-bottom:10px;text-transform:uppercase}
+.sp-search-result-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;transition:background 0.15s}
+.sp-search-result-row:hover{background:var(--surface2)}
+.sp-sr-ticker{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--text1);min-width:60px}
+.sp-sr-name{font-size:11px;color:var(--text2);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sp-sr-add{font-size:10px;font-family:'JetBrains Mono',monospace;padding:3px 10px;border-radius:6px;border:1px solid var(--primary-glow);background:var(--primary-dim);color:var(--primary);cursor:pointer;white-space:nowrap;flex-shrink:0}
+.sp-sr-add:hover{background:var(--primary);color:#0a0b14}
+.sp-sr-add.selected{background:var(--surface2);color:var(--text3);border-color:var(--border);cursor:default}
+.sp-search-spinner{font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;padding:8px 0}
+.sp-chip-custom{border-color:rgba(96,128,245,0.4);background:rgba(96,128,245,0.08)}
 .sp-search-icon{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:15px;height:15px;color:var(--text3);pointer-events:none}
 .stock-grid{
   display:grid;
@@ -1397,6 +1408,10 @@ option{background:var(--bg);color:var(--text1)}
         <input class="sp-search-input" id="sp-searchInput" placeholder="Search ticker or company…" autocomplete="off">
       </div>
       <div class="stock-grid" id="sp-stockGrid"></div>
+      <div class="sp-search-results" id="sp-searchResults">
+        <div class="sp-search-results-label">Finnhub results</div>
+        <div id="sp-searchResultsList"></div>
+      </div>
     </div>
 
     <!-- RIGHT: Config Panel -->
@@ -1614,20 +1629,47 @@ function renderStockGrid(query){
     pool=pool.filter(s=>s.t.toLowerCase().includes(q)||s.n.toLowerCase().includes(q));
   }
   if(!pool.length){
-    grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:40px 0;font-family:\'JetBrains Mono\',monospace;font-size:11px;color:var(--text3)">No stocks match your search.</div>';
-    return;
+    grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:40px 0;font-family:\'JetBrains Mono\',monospace;font-size:11px;color:var(--text3)">No stocks match — try searching below.</div>';
+  } else {
+    grid.innerHTML=pool.map(s=>{
+      const mc=s.m==='US'?'mkt-us':s.m==='UK'?'mkt-uk':'mkt-ie';
+      const sel=selectedTickers.has(s.t);
+      return`<div class="stock-card${sel?' selected':''}" data-tk="${esc(s.t)}" onclick="toggleStock('${esc(s.t)}')">
+        <div class="sc-check"><svg class="sc-check-mark" viewBox="0 0 8 6" fill="none"><path d="M1 3L3 5L7 1" stroke="#0a0b14" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <div class="sc-ticker">${esc(s.t)}</div>
+        <div class="sc-name">${esc(s.n)}</div>
+        <div class="sc-badges"><span class="sr-mkt ${mc}">${s.m}</span><span class="sc-sector">${esc(s.s)}</span></div>
+      </div>`;
+    }).join('');
   }
-  grid.innerHTML=pool.map(s=>{
-    const mc=s.m==='US'?'mkt-us':s.m==='UK'?'mkt-uk':'mkt-ie';
-    const sel=selectedTickers.has(s.t);
-    return`<div class="stock-card${sel?' selected':''}" data-tk="${esc(s.t)}" onclick="toggleStock('${esc(s.t)}')">
-      <div class="sc-check"><svg class="sc-check-mark" viewBox="0 0 8 6" fill="none"><path d="M1 3L3 5L7 1" stroke="#0a0b14" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-      <div class="sc-ticker">${esc(s.t)}</div>
-      <div class="sc-name">${esc(s.n)}</div>
-      <div class="sc-badges"><span class="sr-mkt ${mc}">${s.m}</span><span class="sc-sector">${esc(s.s)}</span></div>
-    </div>`;
-  }).join('');
+  // Trigger Finnhub live search when query is present
+  if(query&&query.length>=1)_debouncedApiSearch(query);
+  else{const rs=document.getElementById('sp-searchResults');if(rs)rs.style.display='none';}
 }
+
+const _debouncedApiSearch=debounce(async function(query){
+  const sec=document.getElementById('sp-searchResults');
+  const lst=document.getElementById('sp-searchResultsList');
+  if(!sec||!lst)return;
+  sec.style.display='';
+  lst.innerHTML='<div class="sp-search-spinner">Searching…</div>';
+  try{
+    const r=await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+    const d=await r.json();
+    const hits=(d.results||[]).filter(x=>!ALL_STOCKS.find(s=>s.t===x.ticker));
+    if(!hits.length){sec.style.display='none';return;}
+    lst.innerHTML=hits.map(r=>{
+      const isSel=selectedTickers.has(r.ticker);
+      return`<div class="sp-search-result-row">
+        <span class="sp-sr-ticker">${esc(r.ticker)}</span>
+        <span class="sp-sr-name">${esc(r.name)}</span>
+        <button class="sp-sr-add${isSel?' selected':''}" ${isSel?'disabled':''} data-ticker="${esc(r.ticker)}" data-name="${esc(r.name)}" onclick="addCustomStock(this.dataset.ticker,this.dataset.name)">
+          ${isSel?'Added':'+ Add'}
+        </button>
+      </div>`;
+    }).join('');
+  }catch(e){sec.style.display='none';}
+},400);
 
 function renderSelectedList(){
   const list=document.getElementById('sp-selectedList');
@@ -1637,7 +1679,10 @@ function renderSelectedList(){
   if(!list)return;
   const arr=[...selectedTickers];
   list.innerHTML=arr.length
-    ?arr.map(tk=>`<div class="sp-chip">${esc(tk)}<button onclick="toggleStock('${esc(tk)}')" title="Remove">×</button></div>`).join('')
+    ?arr.map(tk=>{
+      const isCustom=customStocks.has(tk)&&!ALL_STOCKS.find(s=>s.t===tk);
+      return`<div class="sp-chip${isCustom?' sp-chip-custom':''}">${esc(tk)}<button onclick="toggleStock('${esc(tk)}')" title="Remove">×</button></div>`;
+    }).join('')
     :'<span style="font-size:11px;color:var(--text3)">No stocks selected yet.</span>';
   if(countEl)countEl.textContent=`${arr.length} / 40`;
   if(btn)btn.disabled=arr.length<3;
@@ -1779,16 +1824,37 @@ const RISK={low:{bp:0.35,mb:0.8},medium:{bp:0.10,mb:1.5},high:{bp:0.00,mb:99}};
 
 let activeMkt='US';
 let selectedTickers=new Set(['AAPL','MSFT','NVDA','JPM','BRK-B','META','JNJ','PG','SHEL.L','AZN.L','CRH','A5G.IR','RYAAY']);
+const customStocks=new Map(); // ticker → {t,n,s,m} for tickers added via search
 let charts={};
 let runResults=null;
+
+function getStockMeta(tk){
+  return ALL_STOCKS.find(s=>s.t===tk)||customStocks.get(tk)||{t:tk,n:tk,s:'Unknown',m:'US'};
+}
+
+function debounce(fn,ms){let timer;return(...a)=>{clearTimeout(timer);timer=setTimeout(()=>fn(...a),ms);};}
+
+function addCustomStock(ticker,name){
+  if(selectedTickers.size>=40)return;
+  customStocks.set(ticker,{t:ticker,n:name,s:'Unknown',m:'US'});
+  selectedTickers.add(ticker);
+  // Refresh add button states in search results
+  document.querySelectorAll('#sp-searchResultsList .sp-sr-add').forEach(btn=>{
+    const row=btn.closest('.sp-search-result-row');
+    if(row&&row.querySelector('.sp-sr-ticker')?.textContent===ticker){
+      btn.textContent='Added';btn.classList.add('selected');btn.disabled=true;
+    }
+  });
+  renderSelectedList();
+  initStockList();
+}
 
 function initStockList(){
   const list=document.getElementById('stockList');
   list.innerHTML='';
   const arr=[...selectedTickers];
   arr.forEach(tk=>{
-    const s=ALL_STOCKS.find(x=>x.t===tk);
-    if(!s)return;
+    const s=getStockMeta(tk);
     const div=document.createElement('div');
     div.className='stock-item active';
     div.dataset.ticker=tk;
@@ -1926,8 +1992,8 @@ function buildSellReasons(s,profile){
 }
 
 async function runAnalysis(){
-  const selArr=ALL_STOCKS.filter(s=>selectedTickers.has(s.t));
-  if(selArr.length<3){alert('Please select at least 3 stocks.');return;}
+  const tickers=[...selectedTickers];
+  if(tickers.length<3){alert('Please select at least 3 stocks.');return;}
   const profileKey=document.getElementById('sp-profileSel').value;
   const riskKey=spRiskKey;
   const lambda=+document.getElementById('lamSlider').value/100;
@@ -1935,7 +2001,6 @@ async function runAnalysis(){
   const useFF5=document.getElementById('quantToggle').checked;
   const useGeo=document.getElementById('geoToggle').checked;
   const profile=PROFILES[profileKey];
-  const tickers=selArr.map(s=>s.t);
 
   const overlay=document.getElementById('loaderOverlay');
   const stepsEl=document.getElementById('loaderSteps');
@@ -1988,7 +2053,7 @@ async function runAnalysis(){
   }
 
   const scored=backendResults.results.map(br=>{
-    const local=ALL_STOCKS.find(s=>s.t===br.ticker)||{};
+    const local=ALL_STOCKS.find(s=>s.t===br.ticker)||customStocks.get(br.ticker)||{};
     // Days until next earnings (null if not available or already passed)
     let daysToEarnings=null;
     if(br.next_earnings_date){

@@ -36,7 +36,8 @@ from sqlmodel import select, or_
 _FRONTEND_HTML = Path(__file__).parent.parent / "index.html"
 
 from ml.data_fetcher import (fetch_stock_data, fetch_multiple_stocks,
-                              get_cache_status, clear_cache as clear_data_cache)
+                              get_cache_status, clear_cache as clear_data_cache,
+                              _get_finnhub_client)
 from ml.feature_engineering import build_features
 from ml.model import NUMKTEnsemble
 from ml.backtest import run_backtest
@@ -536,6 +537,41 @@ def clear_model_cache(current_user: User = Depends(get_current_user)):
     """Clear in-memory model cache (forces retrain on next /analyse)."""
     _model_cache.clear()
     return {"status": "model cache cleared"}
+
+
+@app.get("/api/search")
+@limiter.limit("20/minute")
+async def search_stocks(q: str, request: Request):
+    """Search for any US stock by ticker or company name via Finnhub symbol search.
+    Returns up to 10 Common Stock matches. No auth required — used by the stock browser."""
+    q = q.strip()
+    if len(q) < 1:
+        return {"results": []}
+
+    client = _get_finnhub_client()
+    if client is None:
+        return {"results": [], "note": "Finnhub key not configured — search unavailable"}
+
+    try:
+        resp = client.symbol_search(q) or {}
+        raw  = resp.get("result", [])
+        results = []
+        for r in raw:
+            symbol = r.get("symbol", "")
+            # Keep US-listed common stocks: no exchange suffix (:), no OTC dots
+            if (r.get("type") == "Common Stock"
+                    and ":" not in symbol
+                    and symbol.isalpha()):
+                results.append({
+                    "ticker": symbol,
+                    "name":   r.get("description", symbol),
+                })
+            if len(results) >= 10:
+                break
+        return {"results": results}
+    except Exception as exc:
+        logger.warning(f"Stock search failed: {exc}")
+        return {"results": [], "error": "Search temporarily unavailable"}
 
 
 # ── Model endpoints ────────────────────────────────────────────────────────
