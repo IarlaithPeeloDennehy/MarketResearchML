@@ -2010,7 +2010,7 @@ async function runAnalysis(){
 
   let steps;
   if(backendLive){
-    steps=['Connecting to NUMKT ML backend','Fetching live data from Yahoo Finance',`Running ${folds}-fold TimeSeriesSplit CV`,'Training Random Forest (300 trees)','Training Gradient Boosting ensemble','Blending predictions + factor signals','Generating BUY / HOLD / SELL signals'];
+    steps=['Connecting to NUMKT ML backend','Fetching live market data (Finnhub / Yahoo Finance)',`Running ${folds}-fold TimeSeriesSplit CV`,'Training Random Forest (300 trees)','Training Gradient Boosting ensemble','Blending predictions + factor signals','Generating BUY / HOLD / SELL signals'];
   } else {
     steps=['Backend offline — using local factor model',`Running ${folds}-fold cross-validation (simulated)`,'Training Random Forest (500 trees)','Training Gradient Boosting ensemble','Blending model predictions'];
     if(useFF5)steps.push('Computing factor profile signals');
