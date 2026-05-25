@@ -18,6 +18,7 @@ Finnhub notes:
     next_earnings_date, analyst_buy, analyst_hold, analyst_sell
 """
 
+import re
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -55,13 +56,17 @@ _executor = ThreadPoolExecutor(max_workers=1)
 
 # ── Cache helpers ──────────────────────────────────────────────────────────
 
+def _safe_filename(ticker: str) -> str:
+    """Strip any character that isn't a letter, digit, dot, or hyphen,
+    then replace dots and hyphens with underscores for filesystem safety."""
+    clean = re.sub(r"[^A-Za-z0-9.\-]", "", ticker)
+    return clean.replace(".", "_").replace("-", "_") or "UNKNOWN"
+
 def _price_cache_path(ticker: str) -> Path:
-    safe = ticker.replace(".", "_").replace("/", "_")
-    return PRICE_DIR / f"{safe}.parquet"
+    return PRICE_DIR / f"{_safe_filename(ticker)}.parquet"
 
 def _info_cache_path(ticker: str) -> Path:
-    safe = ticker.replace(".", "_").replace("/", "_")
-    return INFO_DIR / f"{safe}.json"
+    return INFO_DIR / f"{_safe_filename(ticker)}.json"
 
 def _cache_is_fresh(path: Path) -> bool:
     if not path.exists():

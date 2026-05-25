@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from pathlib import Path
 from typing import List, Optional
+import re
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone
@@ -25,6 +26,25 @@ import os
 from pathlib import Path
 import warnings
 warnings.filterwarnings("ignore")
+
+# ── Ticker validation ──────────────────────────────────────────────────────
+# Only allow uppercase letters, digits, dots and hyphens (covers US/UK/IE tickers).
+# Max 15 chars covers the longest exchange-suffixed tickers (e.g. SOMETHING.IR).
+_TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,15}$")
+
+def _validate_tickers(tickers: list[str]) -> list[str]:
+    """Uppercase, strip whitespace, and validate ticker format.
+    Raises HTTPException(400) for any ticker that fails validation."""
+    cleaned = []
+    for raw in tickers:
+        t = raw.strip().upper()
+        if not _TICKER_RE.match(t):
+            raise HTTPException(
+                400,
+                f"Invalid ticker '{raw}': must be 1–15 uppercase letters, digits, dots, or hyphens."
+            )
+        cleaned.append(t)
+    return cleaned
 
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -382,11 +402,12 @@ async def analyse(request: Request, req: AnalyseRequest, current_user: User = De
         raise HTTPException(400, "Please provide at least 3 tickers.")
     if len(req.tickers) > 40:
         raise HTTPException(400, "Maximum 40 tickers per request.")
+    tickers = _validate_tickers(req.tickers)
 
-    logger.info(f"Analyse: {req.tickers} | profile={req.profile}")
+    logger.info(f"Analyse: {tickers} | profile={req.profile}")
 
     try:
-        raw_data, uncached_count = await fetch_multiple_stocks(req.tickers, req.lookback_years+1)
+        raw_data, uncached_count = await fetch_multiple_stocks(tickers, req.lookback_years+1)
         if not raw_data:
             raise HTTPException(502, "Could not fetch data for any tickers.")
 
@@ -455,15 +476,16 @@ async def analyse(request: Request, req: AnalyseRequest, current_user: User = De
 
 @app.post("/backtest")
 @limiter.limit("3/minute")
-async def backtest(request: Request, req: BacktestRequest):
+async def backtest(request: Request, req: BacktestRequest, current_user: User = Depends(get_current_user)):
     """
     Runs walk-forward backtest AND trains the model on real returns.
     After this runs, /analyse will use the trained model automatically.
     """
     if len(req.tickers) < 3:
         raise HTTPException(400, "Backtest requires at least 3 tickers.")
+    tickers = _validate_tickers(req.tickers)
 
-    logger.info(f"Backtest: {req.tickers} | train={req.train_model}")
+    logger.info(f"Backtest: {tickers} | train={req.train_model}")
 
     try:
         # Use cached data if available to avoid hitting Yahoo again
@@ -473,7 +495,7 @@ async def backtest(request: Request, req: BacktestRequest):
             features_df = _data_cache["latest_features"]
         else:
             logger.info("No cache — fetching fresh data")
-            raw_data, _ = await fetch_multiple_stocks(req.tickers, req.lookback_years+1)
+            raw_data, _ = await fetch_multiple_stocks(tickers, req.lookback_years+1)
             if not raw_data:
                 raise HTTPException(502, "Could not fetch backtest data.")
             features_df = build_features(raw_data, profile=req.profile)
@@ -594,7 +616,7 @@ def model_info(current_user: User = Depends(get_current_user)):
     }
 
 @app.get("/stock/{ticker}")
-async def get_stock(ticker: str):
+async def get_stock(ticker: str, current_user: User = Depends(get_current_user)):
     try:
         data = await fetch_stock_data(ticker.upper(), lookback_years=5)
         if not data:
