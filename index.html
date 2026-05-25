@@ -2033,7 +2033,7 @@ function renderResults(R){
     <div class="metric-card hl animate-in"><div class="mc-label">Top Pick</div><div class="mc-val">${top.t}</div><div class="mc-sub">${top.signal} · ${(top.score*100).toFixed(0)}%</div></div>
     <div class="metric-card hl-green animate-in delay-1"><div class="mc-label">BUY Signals</div><div class="mc-val">${buys.length}</div><div class="mc-sub">${buys.slice(0,3).map(s=>s.t).join(', ')}</div></div>
     <div class="metric-card animate-in delay-2"><div class="mc-label">HOLD</div><div class="mc-val">${holds.length}</div><div class="mc-sub">of ${scored.length} stocks · ${mkts}</div></div>
-    <div class="metric-card animate-in delay-3"><div class="mc-label">Model IC</div><div class="mc-val">${cvICVal??'—'}</div><div class="mc-sub">${cvAcc!=null?`acc ${cvAcc}% · `:''}${folds}-fold · λ=${lambda.toFixed(2)}</div></div>
+    <div class="metric-card animate-in delay-3"><div class="mc-label">Model IC</div><div class="mc-val">${cvICVal??'—'}</div><div class="mc-sub">${cvAcc!=null?`acc ${cvAcc}% · `:''}${folds}-fold CV</div></div>
     <div class="metric-card animate-in delay-4"><div class="mc-label">Avg Confidence</div><div class="mc-val">${avgS}%</div><div class="mc-sub">${profile.l}</div></div>`;
 
   const bb=document.getElementById('buyBannerSlot');
