@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from pathlib import Path
 from typing import List, Optional
 import re
+import requests as _requests
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone
@@ -606,8 +607,8 @@ async def search_stocks(q: str, request: Request, types: str = "stock"):
     if cached and (now_ts - cached["ts"]) < _SEARCH_CACHE_TTL:
         return {"results": cached["results"], "cached": True}
 
-    client = _get_finnhub_client()
-    if client is None:
+    api_key = os.environ.get("FINNHUB_API_KEY", "").strip()
+    if not api_key:
         return {"results": [], "finnhub_active": False,
                 "note": "Finnhub key not configured — search unavailable"}
 
@@ -619,15 +620,23 @@ async def search_stocks(q: str, request: Request, types: str = "stock"):
     }
     accepted_types = _accepted.get(types, {"Common Stock"})
 
+    def _do_search() -> dict:
+        r = _requests.get(
+            "https://finnhub.io/api/v1/search",
+            params={"q": q, "token": api_key},
+            timeout=8,
+        )
+        r.raise_for_status()
+        return r.json()
+
     try:
-        # Run the synchronous Finnhub call off the event loop with a hard timeout.
         loop = asyncio.get_event_loop()
         resp = await asyncio.wait_for(
-            loop.run_in_executor(None, lambda: client.symbol_search(q) or {}),
-            timeout=5.0,
+            loop.run_in_executor(None, _do_search),
+            timeout=10.0,
         )
-        raw     = resp.get("result", []) if isinstance(resp, dict) else []
-        logger.info(f"Finnhub symbol_search('{q}'): resp type={type(resp).__name__}, raw count={len(raw)}")
+        raw = resp.get("result", []) if isinstance(resp, dict) else []
+        logger.info(f"Finnhub /search '{q}': {len(raw)} raw results")
         results = []
 
         for r in raw:
