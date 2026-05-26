@@ -169,7 +169,6 @@ const _debouncedApiSearch=debounce(async function(query){
   if(cached){_renderApiResults(lst,cached,query,sec,lbl);return;}
 
   sec.style.display='block';
-  const lbl=document.getElementById('sp-searchResultsLabel');
   if(lbl)lbl.textContent='Searching Finnhub…';
   lst.innerHTML='<div class="sp-search-spinner">…</div>';
 
