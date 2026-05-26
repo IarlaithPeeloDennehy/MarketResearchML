@@ -13,6 +13,7 @@ Changes from v1:
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from pathlib import Path
 from typing import List, Optional
@@ -23,7 +24,6 @@ from datetime import datetime, timezone
 import logging
 import asyncio
 import os
-from pathlib import Path
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -139,9 +139,20 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(user_router)
 
+# ── Static assets (CSS + JS extracted from index.html) ────────────────────
+_STATIC_DIR = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+
 # ── In-memory caches ───────────────────────────────────────────────────────
 _model_cache: dict = {}   # profile_risk_lookback -> NUMKTEnsemble
 _data_cache:  dict = {}   # "latest" -> raw_data, features_df
+
+# ── Search result cache ────────────────────────────────────────────────────
+# Keyed by "normalised_query|types". TTL prevents stale results; max cap
+# prevents unbounded memory growth on a long-running server.
+_search_cache: dict = {}
+_SEARCH_CACHE_TTL = 300   # 5 minutes — symbol lists rarely change intraday
+_SEARCH_CACHE_MAX = 500   # evict oldest when this is exceeded
 
 # ── Background retraining ──────────────────────────────────────────────────
 _last_retrain: float = 0.0          # Unix timestamp of last background retrain
@@ -563,34 +574,91 @@ def clear_model_cache(current_user: User = Depends(get_current_user)):
 
 @app.get("/api/search")
 @limiter.limit("20/minute")
-async def search_stocks(q: str, request: Request):
-    """Search for any US stock by ticker or company name via Finnhub symbol search.
-    Returns up to 10 Common Stock matches. No auth required — used by the stock browser."""
+async def search_stocks(q: str, request: Request, types: str = "stock"):
+    """
+    Search for stocks/ETFs by ticker or company name via Finnhub symbol search.
+
+    Query params:
+      q     — ticker symbol or company name fragment (required)
+      types — "stock" (default) | "etf" | "all"
+
+    Returns up to 15 normalised results. Results are cached per-query for
+    _SEARCH_CACHE_TTL seconds so repeated keystrokes never hit Finnhub twice.
+    No auth required — this is the public acquisition surface.
+    """
     q = q.strip()
-    if len(q) < 1:
+    if not q:
         return {"results": []}
+
+    # Normalise cache key so 'aapl' and 'AAPL' share the same entry.
+    cache_key = f"{q.lower()}|{types}"
+    now_ts    = datetime.now(timezone.utc).timestamp()
+
+    cached = _search_cache.get(cache_key)
+    if cached and (now_ts - cached["ts"]) < _SEARCH_CACHE_TTL:
+        return {"results": cached["results"], "cached": True}
 
     client = _get_finnhub_client()
     if client is None:
         return {"results": [], "note": "Finnhub key not configured — search unavailable"}
 
+    # Map frontend types param to the Finnhub type strings we accept.
+    _accepted: dict[str, set] = {
+        "stock": {"Common Stock"},
+        "etf":   {"ETP", "ETF"},
+        "all":   {"Common Stock", "ETP", "ETF", "ADR"},
+    }
+    accepted_types = _accepted.get(types, {"Common Stock"})
+
     try:
-        resp = client.symbol_search(q) or {}
-        raw  = resp.get("result", [])
+        # Run the synchronous Finnhub call off the event loop with a hard timeout.
+        loop = asyncio.get_event_loop()
+        resp = await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: client.symbol_search(q) or {}),
+            timeout=5.0,
+        )
+        raw     = resp.get("result", [])
         results = []
+
         for r in raw:
             symbol = r.get("symbol", "")
-            # Keep US-listed common stocks: no exchange suffix (:), no OTC dots
-            if (r.get("type") == "Common Stock"
-                    and ":" not in symbol
-                    and symbol.isalpha()):
-                results.append({
-                    "ticker": symbol,
-                    "name":   r.get("description", symbol),
-                })
-            if len(results) >= 10:
+            rtype  = r.get("type", "")
+
+            # Skip exchange-qualified duplicates like "AAPL:NASDAQ" — the plain
+            # symbol "AAPL" will appear separately and is what downstream code expects.
+            if ":" in symbol:
+                continue
+
+            # Use the same validation regex as /analyse so any ticker that passes
+            # search can also be passed to the ML endpoint without 400 errors.
+            # This naturally allows BRK-B, BRK.B, AZN.L, A5G.IR etc.
+            if not symbol or not _TICKER_RE.match(symbol.upper()):
+                continue
+
+            if rtype not in accepted_types:
+                continue
+
+            results.append({
+                "ticker":        symbol.upper(),
+                "displaySymbol": r.get("displaySymbol", symbol).upper(),
+                "name":          r.get("description", symbol),
+                "exchange":      r.get("primaryExchange", ""),
+                "type":          rtype,
+            })
+            if len(results) >= 15:
                 break
+
+        # Cache the result; evict the oldest entry when the cap is hit.
+        _search_cache[cache_key] = {"ts": now_ts, "results": results}
+        if len(_search_cache) > _SEARCH_CACHE_MAX:
+            oldest = min(_search_cache, key=lambda k: _search_cache[k]["ts"])
+            del _search_cache[oldest]
+
         return {"results": results}
+
+    except asyncio.TimeoutError:
+        logger.warning(f"Search timed out for query '{q}'")
+        return {"results": [], "error": "Search timed out — please try again"}
     except Exception as exc:
         logger.warning(f"Stock search failed: {exc}")
         return {"results": [], "error": "Search temporarily unavailable"}
