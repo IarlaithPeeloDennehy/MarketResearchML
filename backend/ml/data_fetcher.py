@@ -53,7 +53,7 @@ INFO_DIR.mkdir(exist_ok=True)
 CACHE_MAX_AGE_HOURS = 168  # 7 days
 MIN_BARS            = 60
 
-_executor = ThreadPoolExecutor(max_workers=1)
+_executor = ThreadPoolExecutor(max_workers=min(4, (os.cpu_count() or 2)))
 
 # ── Cache helpers ──────────────────────────────────────────────────────────
 
@@ -417,7 +417,7 @@ async def fetch_stock_data(ticker: str, lookback_years: int = 5) -> dict | None:
     end   = datetime.today()
     start = end - timedelta(days=365 * lookback_years + 60)
 
-    loop   = asyncio.get_event_loop()
+    loop   = asyncio.get_running_loop()
     result = await loop.run_in_executor(
         _executor, _fetch_one,
         ticker, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")

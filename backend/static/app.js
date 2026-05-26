@@ -1115,7 +1115,7 @@ async function runBacktest(){
   if(!m||m.n_periods===0){document.getElementById('btResults').innerHTML='<div class="bt-error">Insufficient price history for backtest. Try adding more tickers or increasing the lookback period.</div>';return;}
   function metricColor(val,good,warn){return val>=good?'var(--green)':val>=warn?'var(--amber)':'var(--red)';}
   document.getElementById('btResults').innerHTML=`
-    <div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-bottom:10px;letter-spacing:0.05em">${m.n_periods} test periods · ${data.backtest_period} lookback · ${data.forward_months}M forward window · ${tickers.length} tickers</div>
+    <div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-bottom:10px;letter-spacing:0.05em">${m.n_periods} test periods · ${m.effective_lookback_years??data.backtest_period}y data · ${data.forward_months}M forward window · ${tickers.length} tickers</div>
     <div class="bt-grid">
       <div class="bt-metric"><div class="bt-lbl">Group Hit Rate</div><div class="bt-val" style="color:${metricColor(m.hit_rate,55,45)}">${m.hit_rate!=null?m.hit_rate+'%':'—'}</div><div class="bt-interp">Top half beat bottom half</div></div>
       <div class="bt-metric"><div class="bt-lbl">Info. Coeff.</div><div class="bt-val" style="color:${metricColor(m.ic_mean,0.10,0.05)}">${m.ic_mean!=null?m.ic_mean.toFixed(3):'—'}</div><div class="bt-interp">${m.interpretation?.ic||''}</div></div>

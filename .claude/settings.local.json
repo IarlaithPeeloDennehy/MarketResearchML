@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "Bash(git push *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(node --check \"backend/static/app.js\")",
+      "Bash(python -m pytest --version)",
+      "Bash(pip show *)",
+      "Bash(python -c \"import fastapi; import sqlmodel; import numpy; print\\('core deps OK'\\)\")",
+      "Bash(pip install *)",
+      "Bash(python -m pytest tests/ -v --tb=short)"
+    ]
+  }
+}

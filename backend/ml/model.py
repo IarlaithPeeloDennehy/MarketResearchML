@@ -40,7 +40,7 @@ predict_proba(), save(), load(), list_saved() all behave identically.
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.model_selection import TimeSeriesSplit, cross_val_predict, cross_val_score
+from sklearn.model_selection import TimeSeriesSplit, cross_val_predict
 from sklearn.preprocessing import RobustScaler
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
@@ -61,9 +61,8 @@ _base = Path(_cache_root) if _cache_root else Path(__file__).parent.parent / "ca
 MODEL_DIR = _base / "models"
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-# Where data_fetcher stores parquet price files and info JSON
+# Where data_fetcher stores parquet price files
 PRICE_DIR = _base / "prices"
-INFO_DIR  = _base / "info"
 
 # Diverse anchor tickers included in training when already cached — never fetched.
 # Broadens the cross-sectional universe so factor patterns aren't learned from
@@ -184,10 +183,9 @@ class NUMKTEnsemble:
             )
             return self._fit_from_price_cache(pd.DataFrame(feature_rows))
 
-        # Append current-snapshot rows (fundamentals + price) if available.
-        # Historical backtest rows have only price rank features; the snapshot
-        # rows add fundamental signal for the current period. Missing fundamental
-        # cols in historical rows will be filled with 0.5 (neutral rank) below.
+        # Append current-snapshot rows (price features only) if available.
+        # Both historical backtest rows and snapshot rows use only price rank
+        # features, keeping the entire training pipeline free of look-ahead bias.
         if features_df is not None and not features_df.empty:
             snap_rows, snap_labels, snap_returns = self._current_snapshot_rows(features_df)
             if snap_rows:
@@ -196,8 +194,7 @@ class NUMKTEnsemble:
                 if forward_returns is not None:
                     forward_returns = forward_returns + snap_returns
                 logger.info(
-                    f"Appended {len(snap_rows)} current-snapshot rows with "
-                    f"fundamental features to backtest training set"
+                    f"Appended {len(snap_rows)} current-snapshot rows (price features)"
                 )
 
         df = pd.DataFrame(feature_rows).fillna(0.5)
@@ -294,26 +291,21 @@ class NUMKTEnsemble:
         feature_rows, return_labels, forward_returns_list = [], [], []
 
         for horizon in FORWARD_HORIZONS:
-            rows, labels, fwd = self._labels_for_horizon(
-                tickers, features_df, horizon
-            )
+            rows, labels, fwd = self._labels_for_horizon(tickers, horizon)
             feature_rows.extend(rows)
             return_labels.extend(labels)
             forward_returns_list.extend(fwd)
 
-        # Append current-snapshot rows: one per ticker using today's full feature
-        # set (price + fundamentals) and the actual past-12M return as the label.
-        # Historical window rows above only have price features; these rows teach
-        # the model to use fundamentals. Missing fundamental cols in historical
-        # rows are filled with 0.5 (neutral rank) by fillna below.
+        # Append current-snapshot rows: one per ticker using price rank features
+        # and the actual past-12M return as the label. These add N more price-only
+        # observations for the current period to the training set.
         snap_rows, snap_labels, snap_returns = self._current_snapshot_rows(features_df)
         if snap_rows:
             feature_rows.extend(snap_rows)
             return_labels.extend(snap_labels)
             forward_returns_list.extend(snap_returns)
             logger.info(
-                f"Appended {len(snap_rows)} current-snapshot rows "
-                f"(price + fundamental features)"
+                f"Appended {len(snap_rows)} current-snapshot rows (price features)"
             )
 
         n = len(return_labels)
@@ -394,29 +386,27 @@ class NUMKTEnsemble:
 
     def _labels_for_horizon(
         self,
-        tickers:     list[str],
-        features_df: pd.DataFrame,
-        horizon:     int,
+        tickers: list[str],
+        horizon: int,
     ) -> tuple[list[dict], list[int], list[float]]:
         """
         For a given forward horizon (in trading days), load each ticker's
         cached price series and generate non-overlapping (features, label)
         pairs stepping through the history.
 
-        Price-derived features (momentum, vol, RSI, price_vs_52w_high) are
-        computed from price history at each window start with no look-ahead bias.
-        Fundamental features (PE, ROE, margins, etc.) are added from the cached
-        info JSON as a point-in-time proxy — today's values used as an approximation
-        across all historical windows. This is imperfect but far better than
-        filling with the neutral 0.5 and ensures the model sees fundamental signal
-        during training, matching the feature space used at inference.
+        Only price-derived features (momentum, vol, RSI, price_vs_52w_high) are
+        used here — computed from price history at each window start with no
+        look-ahead bias. Fundamental features are intentionally excluded from
+        historical windows because we have no point-in-time fundamental data;
+        using today's values for windows from 2–5 years ago would inject
+        look-ahead bias into every training observation. Fundamental rank columns
+        not present in these rows are filled with 0.5 (neutral) downstream.
 
         Each row is tagged with _time_idx = t_start so that
         _fit_from_price_cache can sort observations chronologically before
         TimeSeriesSplit CV.
         """
         price_series: dict[str, pd.Series] = {}
-        info_series:  dict[str, dict]      = {}
         for ticker in tickers:
             path = PRICE_DIR / f"{safe_ticker_filename(ticker)}.parquet"
             if not path.exists():
@@ -427,14 +417,6 @@ class NUMKTEnsemble:
                     price_series[ticker] = df_p["Close"].sort_index()
             except Exception as e:
                 logger.warning(f"Could not load price cache for {ticker}: {e}")
-            # Load cached fundamental snapshot (today's values — used as proxy)
-            info_path = INFO_DIR / f"{safe_ticker_filename(ticker)}.json"
-            if info_path.exists():
-                try:
-                    with open(info_path) as _f:
-                        info_series[ticker] = json.load(_f)
-                except Exception:
-                    info_series[ticker] = {}
 
         if len(price_series) < 3:
             return [], [], []
@@ -489,49 +471,15 @@ class NUMKTEnsemble:
                 hi = p.iloc[-min(252, len(p)):].max()
                 snap["price_vs_52w_high"] = float(p.iloc[-1] / hi - 1) if hi > 0 else np.nan
 
-                # Add fundamental features from cached info snapshot.
-                # These are today's values used as a point-in-time proxy.
-                if ticker in info_series:
-                    info = info_series[ticker]
-                    def _fi(key, default=np.nan):
-                        try:
-                            v = float(info.get(key) or default)
-                            return v if np.isfinite(v) else default
-                        except (TypeError, ValueError):
-                            return default
-                    snap["pe_ratio"]       = _fi("trailingPE")
-                    snap["forward_pe"]     = _fi("forwardPE")
-                    snap["pb_ratio"]       = _fi("priceToBook")
-                    snap["roe"]            = _fi("returnOnEquity")
-                    snap["net_margin"]     = _fi("profitMargins")
-                    snap["revenue_growth"] = _fi("revenueGrowth")
-                    snap["debt_equity"]    = _fi("debtToEquity")
-                    snap["dividend_yield"] = _fi("dividendYield")
-                    snap["beta"]           = _fi("beta")
-                    snap["log_mktcap"]     = np.log(max(_fi("marketCap", 1e6), 1e6))
-                    # Finnhub-sourced features (NaN for yfinance-only stocks)
-                    snap["fcf_yield"]         = _fi("fcf_yield")
-                    snap["ev_ebitda"]         = _fi("ev_ebitda")
-                    snap["earnings_surprise"] = _fi("earnings_surprise_avg")
-                    try:
-                        ab = int(info.get("analyst_buy")  or 0)
-                        ah = int(info.get("analyst_hold") or 0)
-                        as_ = int(info.get("analyst_sell") or 0)
-                        total = ab + ah + as_
-                        snap["analyst_consensus"] = (ab - as_) / total if total >= 3 else np.nan
-                    except (TypeError, ValueError):
-                        snap["analyst_consensus"] = np.nan
-
                 raw_snaps[ticker] = snap
 
             if len(raw_snaps) < 3:
                 continue
 
             # Cross-sectional rank normalisation at this window's point in time.
-            # Price-derived features are always present; fundamental features are
-            # included when a cached info JSON exists for the ticker.
+            # Only price-derived features are used here — no fundamental look-ahead.
             snap_df = pd.DataFrame(raw_snaps).T
-            for col in FEATURE_COLS:
+            for col in PRICE_FEATURE_COLS:
                 if col in snap_df.columns and snap_df[col].notna().sum() > 1:
                     snap_df[col + "_rank"] = snap_df[col].rank(pct=True)
                 elif col + "_rank" not in snap_df.columns:
@@ -574,30 +522,19 @@ class NUMKTEnsemble:
         features_df: pd.DataFrame,
     ) -> tuple[list[dict], list[int], list[float]]:
         """
-        One training observation per ticker using today's full feature set
-        (price + fundamental rank columns) with the actual past-12M return
-        as the label.
+        One training observation per ticker using today's price rank features
+        with the actual past-12M return as the label.
 
-        Why this is not look-ahead bias
-        ─────────────────────────────────
-        The label (12M price return) is already-known historical data loaded
-        directly from the price cache. We are using current fundamentals to
-        explain a past outcome — the accepted approximation is that business
-        quality (high ROE, low PE, strong margins) is persistent enough across
-        12 months that today's values are a reasonable proxy for last year's.
-        This is standard practice in cross-sectional factor research when
-        point-in-time fundamental data is unavailable.
-
-        These rows give the model its only exposure to fundamental features.
-        Historical window rows (from _labels_for_horizon) have price features
-        only; their fundamental rank columns are filled with 0.5 (neutral) by
-        the fillna call in the caller. The model therefore learns:
-          - From historical rows: which price patterns predict relative returns
-          - From these rows:      which fundamental profiles predict relative returns
-        Both signals are then available at inference time.
+        Only price-derived rank features are used here (PRICE_FEATURE_COLS),
+        consistent with the historical window rows from _labels_for_horizon.
+        Using today's fundamental data (PE, ROE, etc.) to explain a past 12M
+        return would be a subtler form of look-ahead bias — the fundamentals
+        the model sees in training would not have existed at the start of that
+        return window. Price-only labels keep the training signal clean and
+        genuinely evaluable via walk-forward backtest.
         """
         all_rank_cols = [
-            c + "_rank" for c in FEATURE_COLS
+            c + "_rank" for c in PRICE_FEATURE_COLS
             if c + "_rank" in features_df.columns
         ]
         if not all_rank_cols or features_df.empty:
@@ -703,15 +640,12 @@ class NUMKTEnsemble:
             self.is_fitted = False
             return self
 
-        n_splits = min(self.cv_folds, max(2, len(y) // 3))
-        tscv     = TimeSeriesSplit(n_splits=n_splits)
-
-        try:
-            cv_scores        = cross_val_score(self._rf_pipe, X, y, cv=tscv,
-                                               scoring="accuracy", n_jobs=-1)
-            self.cv_accuracy = float(np.mean(cv_scores))
-        except Exception:
-            self.cv_accuracy = 0.0
+        # Skip CV entirely. features_df is a single cross-sectional snapshot
+        # (one row per ticker, all from the same moment), not a time series.
+        # TimeSeriesSplit on row-index order is meaningless here and produces a
+        # fabricated accuracy number. Report 0.0 so the frontend shows "N/A"
+        # rather than a misleading figure.
+        self.cv_accuracy = 0.0
 
         self._rf_pipe.fit(X, y)
         self._gb_pipe.fit(X, y)

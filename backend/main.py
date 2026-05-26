@@ -21,7 +21,7 @@ import re
 import requests as _requests
 import numpy as np
 import pandas as pd
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import logging
 import asyncio
 import os
@@ -29,9 +29,9 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # ── Ticker validation ──────────────────────────────────────────────────────
-# Only allow uppercase letters, digits, dots and hyphens (covers US/UK/IE tickers).
-# Max 15 chars covers the longest exchange-suffixed tickers (e.g. SOMETHING.IR).
-_TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,15}$")
+# Lookahead forces at least one letter — rejects pure-digit/symbol inputs like "123".
+# Allows uppercase letters, digits, dots and hyphens (covers BRK-B, AZN.L, A5G.IR etc.).
+_TICKER_RE = re.compile(r"^(?=[A-Z0-9.\-]*[A-Z])[A-Z0-9.\-]{1,15}$")
 
 def _validate_tickers(tickers: list[str]) -> list[str]:
     """Uppercase, strip whitespace, and validate ticker format.
@@ -66,7 +66,7 @@ from ml.scoring import score_universe
 from ml.insights import build_snapshot, load_snapshot, is_stale
 from auth.router import router as auth_router
 from auth.dependencies import get_current_user
-from auth.models import User, UserSession
+from auth.models import User, UserSession, ActivityEvent
 from user.router import router as user_router
 from db.session import get_db
 from db.base import engine
@@ -163,18 +163,27 @@ _RETRAIN_COOLDOWN    = 3600         # seconds — don't retrain more than once p
 _last_insights_build: float = 0.0   # Unix timestamp of last snapshot build
 _INSIGHTS_COOLDOWN          = 3600  # seconds — rebuild at most once per hour
 
+# ── Background task registry ───────────────────────────────────────────────
+# asyncio holds only weak references to tasks; without a strong reference the
+# GC can collect a task before it finishes.  _background_tasks holds that
+# strong reference for the lifetime of each task.
+_background_tasks: set[asyncio.Task] = set()
+
+def _fire_task(coro) -> asyncio.Task:
+    """Schedule a background coroutine, keeping a strong reference until done."""
+    t = asyncio.create_task(coro)
+    _background_tasks.add(t)
+    t.add_done_callback(_background_tasks.discard)
+    return t
+
 
 async def _build_insights_snapshot() -> None:
     """Build the public /api/insights snapshot in the background.
 
-    Runs in an asyncio task so it never blocks a request. The cooldown stamp is
-    set up-front so concurrent requests don't trigger overlapping builds. A true
-    daily Render cron / APScheduler job is the more robust alternative; this lazy
-    refresh mirrors the existing _background_retrain pattern and needs no new
-    dependency on Render's single web service.
+    Callers must stamp _last_insights_build = now_ts BEFORE firing this task
+    so that concurrent requests see the cooldown immediately and don't queue
+    duplicate builds.
     """
-    global _last_insights_build
-    _last_insights_build = datetime.now(timezone.utc).timestamp()
     try:
         logger.info("Insights snapshot: building")
         snap = await build_snapshot()
@@ -187,12 +196,12 @@ async def _background_retrain(raw_data: dict, features_df) -> None:
     """Retrain and save the model in the background after new data is fetched.
 
     Runs in an asyncio task so it never delays the /analyse response.
+    Callers must stamp _last_retrain = now_ts BEFORE firing this task.
     Failures are logged but swallowed — the caller's result is unaffected.
     """
-    global _last_retrain
     try:
         logger.info("Background retrain: starting model update with newly fetched data")
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         metrics = await loop.run_in_executor(
             None,
             lambda: run_backtest(
@@ -209,7 +218,6 @@ async def _background_retrain(raw_data: dict, features_df) -> None:
             trained_model = NUMKTEnsemble.load("default")
             if trained_model:
                 _model_cache["__trained__"] = trained_model
-                _last_retrain = datetime.now(timezone.utc).timestamp()
                 logger.info(
                     f"Background retrain complete — model updated "
                     f"({trained_model.n_training_rows} rows, "
@@ -266,18 +274,34 @@ def _run_migrations() -> None:
 
 @app.on_event("startup")
 async def startup():
-    # ── Run database migrations ────────────────────────────────────────────
+    global _last_insights_build
+    loop = asyncio.get_running_loop()
+
+    # ── Run database migrations (with exponential-backoff retry) ──────────
     if engine is not None:
-        try:
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, _run_migrations)
-        except Exception as exc:
-            logger.error(f"Database migration failed: {exc}", exc_info=True)
-            raise RuntimeError("Startup aborted — database migration failed") from exc
+        _MAX_MIGRATION_ATTEMPTS = 5
+        for attempt in range(1, _MAX_MIGRATION_ATTEMPTS + 1):
+            try:
+                await loop.run_in_executor(None, _run_migrations)
+                break
+            except Exception as exc:
+                if attempt == _MAX_MIGRATION_ATTEMPTS:
+                    logger.error(
+                        f"Database migration failed after {_MAX_MIGRATION_ATTEMPTS} attempts: {exc}",
+                        exc_info=True,
+                    )
+                    raise RuntimeError("Startup aborted — database migration failed") from exc
+                wait = 2 ** attempt  # 2 s, 4 s, 8 s, 16 s
+                logger.warning(
+                    f"Migration attempt {attempt}/{_MAX_MIGRATION_ATTEMPTS} failed: {exc}. "
+                    f"Retrying in {wait}s…"
+                )
+                await asyncio.sleep(wait)
 
     # ── Prune stale sessions ───────────────────────────────────────────────
     try:
-        for db in get_db():
+        db = next(get_db())
+        try:
             now = datetime.now(timezone.utc)
             stmt = select(UserSession).where(
                 or_(UserSession.expires_at < now, UserSession.revoked == True)  # noqa: E712
@@ -288,8 +312,28 @@ async def startup():
             db.commit()
             if stale:
                 logger.info(f"Pruned {len(stale)} expired/revoked session(s)")
+        finally:
+            db.close()
     except Exception as exc:
         logger.warning(f"Session pruning skipped (DB may not be ready): {exc}")
+
+    # ── Purge old ActivityEvent rows (retain 90 days) ─────────────────────
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+        db = next(get_db())
+        try:
+            old_events = db.exec(
+                select(ActivityEvent).where(ActivityEvent.created_at < cutoff)
+            ).all()
+            for ev in old_events:
+                db.delete(ev)
+            db.commit()
+            if old_events:
+                logger.info(f"Purged {len(old_events)} ActivityEvent row(s) older than 90 days")
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.warning(f"ActivityEvent purge skipped (non-fatal): {exc}")
 
     # ── Warn when cache directory is not persistent ────────────────────────
     if not os.environ.get("CACHE_DIR"):
@@ -318,7 +362,8 @@ async def startup():
     # ── Warm the public insights snapshot ──────────────────────────────────
     try:
         if is_stale():
-            asyncio.create_task(_build_insights_snapshot())
+            _last_insights_build = datetime.now(timezone.utc).timestamp()
+            _fire_task(_build_insights_snapshot())
             logger.info("Insights snapshot warm-up queued on startup")
     except Exception as exc:
         logger.warning(f"Insights warm-up skipped: {exc}")
@@ -395,10 +440,12 @@ async def get_insights(request: Request):
     immediately; if it's stale, kicks a non-blocking background rebuild guarded
     by a cooldown so repeated hits never trigger a Yahoo fetch storm.
     """
+    global _last_insights_build
     snap   = load_snapshot()
     now_ts = datetime.now(timezone.utc).timestamp()
     if is_stale() and (now_ts - _last_insights_build) > _INSIGHTS_COOLDOWN:
-        asyncio.create_task(_build_insights_snapshot())
+        _last_insights_build = now_ts
+        _fire_task(_build_insights_snapshot())
     if snap is None:
         return {"status": "warming",
                 "message": "Insights are being generated. Check back shortly."}
@@ -410,6 +457,7 @@ async def get_insights(request: Request):
 @app.post("/analyse")
 @limiter.limit("10/minute")
 async def analyse(request: Request, req: AnalyseRequest, current_user: User = Depends(get_current_user)):
+    global _last_retrain
     if len(req.tickers) < 3:
         raise HTTPException(400, "Please provide at least 3 tickers.")
     if len(req.tickers) > 40:
@@ -458,7 +506,8 @@ async def analyse(request: Request, req: AnalyseRequest, current_user: User = De
         # and the cooldown has elapsed — runs after the response is returned
         now_ts = datetime.now(timezone.utc).timestamp()
         if uncached_count > 0 and (now_ts - _last_retrain) > _RETRAIN_COOLDOWN:
-            asyncio.create_task(_background_retrain(raw_data, features_df))
+            _last_retrain = now_ts
+            _fire_task(_background_retrain(raw_data, features_df))
             logger.info(
                 f"Background retrain queued ({uncached_count} new ticker(s) fetched)"
             )
@@ -506,13 +555,23 @@ async def backtest(request: Request, req: BacktestRequest, current_user: User = 
     logger.info(f"Backtest: {tickers} | train={req.train_model}")
 
     try:
-        # Use cached data if available to avoid hitting Yahoo again
-        if "latest" in _data_cache:
+        # Use cached data only when every requested ticker is present in the cache.
+        # A stale cache from a different user's /analyse call must not contaminate
+        # this user's backtest — verify the ticker sets match before reusing.
+        cached_raw = _data_cache.get("latest")
+        if (cached_raw is not None
+                and set(tickers).issubset(set(cached_raw.keys()))):
             logger.info("Using cached data from last /analyse call")
-            raw_data    = _data_cache["latest"]
+            raw_data    = cached_raw
             features_df = _data_cache["latest_features"]
         else:
-            logger.info("No cache — fetching fresh data")
+            if cached_raw is not None:
+                logger.info(
+                    "Cache ticker mismatch — fetching fresh data "
+                    f"(requested: {tickers}, cached: {sorted(cached_raw.keys())})"
+                )
+            else:
+                logger.info("No cache — fetching fresh data")
             raw_data, _ = await fetch_multiple_stocks(tickers, req.lookback_years+1)
             if not raw_data:
                 raise HTTPException(502, "Could not fetch backtest data.")
@@ -630,7 +689,7 @@ async def search_stocks(q: str, request: Request, types: str = "stock"):
         return r.json()
 
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         resp = await asyncio.wait_for(
             loop.run_in_executor(None, _do_search),
             timeout=10.0,

@@ -18,7 +18,7 @@ from typing import Optional
 from uuid import uuid4
 
 from sqlmodel import Field, SQLModel, Column
-from sqlalchemy import JSON, Text
+from sqlalchemy import JSON, Text, String
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
@@ -51,7 +51,7 @@ class UserSession(SQLModel, table=True):
 
     id:         str      = Field(default_factory=_uuid, primary_key=True)
     user_id:    str      = Field(foreign_key="users.id", index=True)
-    token_hash: str      = Field(index=True, max_length=64)  # SHA-256 hex of the raw token
+    token_hash: str      = Field(sa_column=Column(String(64), unique=True, index=True, nullable=False))  # SHA-256 hex
     created_at: datetime = Field(default_factory=_now)
     expires_at: datetime
     ip_address: Optional[str] = Field(default=None, max_length=45)

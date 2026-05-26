@@ -33,9 +33,8 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 import logging
-from pathlib import Path
 
-from .feature_engineering import FEATURE_COLS, PRICE_FEATURE_COLS
+from .feature_engineering import PRICE_FEATURE_COLS
 from .model import NUMKTEnsemble
 
 logger = logging.getLogger(__name__)
@@ -56,25 +55,11 @@ def _extract_prices(data: dict) -> pd.Series | None:
     return None
 
 
-def _extract_info(data: dict) -> dict:
-    raw = data.get("_raw")
-    if raw and isinstance(raw, dict):
-        return raw.get("info") or {}
-    return data.get("info") or {}
-
-
-def _safe(val, default=0.0) -> float:
-    try:
-        f = float(val)
-        return f if np.isfinite(f) else default
-    except (TypeError, ValueError):
-        return default
-
 
 def run_backtest(
     features_df:      pd.DataFrame,
     raw_data:         dict,
-    profile:          str  = "quality",
+    profile:          str  = "quality",   # reserved for future per-profile feature selection
     forward_months:   int  = 12,
     rebalance_months: int  = 3,
     train_model:      bool = True,   # if True, trains model on real returns
@@ -114,11 +99,17 @@ def run_backtest(
             f"{min_bars//21} months). Try increasing lookback_years."
         )
 
-    tickers   = list(price_series.keys())
-    min_len   = min(len(price_series[t]) for t in tickers)
+    tickers               = list(price_series.keys())
+    min_len               = min(len(price_series[t]) for t in tickers)
+    effective_lookback_yrs = round(min_len / 252, 1)
     n_periods = max(1, (min_len - forward_days) // rebalance_days)
+    if effective_lookback_yrs < 2.0:
+        logger.warning(
+            f"Effective lookback is only {effective_lookback_yrs}y ({min_len} bars). "
+            "Results may be unreliable — consider increasing lookback_years."
+        )
     logger.info(f"Backtest: {len(tickers)} tickers, {n_periods} periods, "
-                f"{forward_months}M forward window")
+                f"{forward_months}M forward window, {effective_lookback_yrs}y effective")
 
     # ── Train / holdout split ──────────────────────────────────────────────
     # Hold out the last ~20% of periods so the model can be evaluated on
@@ -493,6 +484,7 @@ def run_backtest(
             "No valid test periods. Increase lookback_years or add more tickers."
         )
         result["training"] = training_info
+        result["effective_lookback_years"] = effective_lookback_yrs
         return result
 
     pa       = np.array(portfolio_returns)        # net of costs
@@ -513,7 +505,9 @@ def run_backtest(
     cum    = np.cumprod(1+pa)
     rm     = np.maximum.accumulate(cum)
     max_dd = float(np.min((cum-rm)/(rm+1e-9)))
-    calmar = ann_port/(abs(max_dd)+1e-9)
+    # Calmar is undefined when there is no drawdown — return None rather than
+    # dividing by epsilon and producing a meaningless astronomical value.
+    calmar = round(ann_port / abs(max_dd), 3) if max_dd < -1e-6 else None
 
     ic_mean  = float(np.mean(period_ics))       if period_ics       else 0.0
     ic_std   = float(np.std(period_ics))        if len(period_ics)>1 else 0.0
@@ -543,13 +537,14 @@ def run_backtest(
         "cost_bps":             cost_bps,
         "sharpe_ratio":         round(sharpe, 3),
         "max_drawdown":         round(max_dd*100, 2),
-        "calmar_ratio":         round(calmar, 3),
+        "calmar_ratio":         calmar,
         "hit_rate":             round(hit_rate*100, 1),
         "ic_mean":              round(ic_mean, 4),
         "ic_std":               round(ic_std, 4),
         "icir":                 round(icir, 3),
         "beta_vs_benchmark":    round(beta, 3),
         "avg_monthly_turnover": round(avg_turn*100, 1),
+        "effective_lookback_years": effective_lookback_yrs,
         "interpretation":       _interpret(hit_rate, ic_mean, sharpe, max_dd, ann_alpha_net),
         "training":             training_info,
     }
