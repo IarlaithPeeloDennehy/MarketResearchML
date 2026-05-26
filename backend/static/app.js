@@ -133,7 +133,7 @@ function renderStockGrid(query){
     pool=pool.filter(s=>s.t.toLowerCase().includes(q)||s.n.toLowerCase().includes(q));
   }
   if(!pool.length){
-    grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:40px 0;font-family:\'JetBrains Mono\',monospace;font-size:11px;color:var(--text3)">No stocks in local universe match — Finnhub results loading above ↑</div>';
+    grid.innerHTML='<div data-fh-placeholder style="grid-column:1/-1;text-align:center;padding:40px 0;font-family:\'JetBrains Mono\',monospace;font-size:11px;color:var(--text3)">Searching Finnhub…</div>';
   } else {
     grid.innerHTML=pool.map(s=>{
       const mc=s.m==='US'?'mkt-us':s.m==='UK'?'mkt-uk':'mkt-ie';
@@ -189,6 +189,30 @@ const _debouncedApiSearch=debounce(async function(query){
 },350);
 
 function _renderApiResults(lst,hits,query,sec,lbl){
+  const grid=document.getElementById('sp-stockGrid');
+  const gridIsEmpty=grid&&grid.querySelector('[data-fh-placeholder]');
+
+  // When the local grid is empty, show Finnhub results as full stock cards in the grid
+  if(gridIsEmpty){
+    if(sec)sec.style.display='none';
+    if(!hits.length){
+      grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:40px 0;font-family:\'JetBrains Mono\',monospace;font-size:11px;color:var(--text3)">No results found on Finnhub for this query.</div>';
+      return;
+    }
+    grid.innerHTML=hits.map(r=>{
+      const sel=selectedTickers.has(r.ticker);
+      const exch=r.exchange?`<span class="sc-sector">${esc(r.exchange)}</span>`:'';
+      return`<div class="stock-card fh-card${sel?' selected':''}" data-tk="${esc(r.ticker)}" onclick="addCustomStock('${esc(r.ticker)}','${esc(r.name)}')">
+        <div class="sc-check"><svg class="sc-check-mark" viewBox="0 0 8 6" fill="none"><path d="M1 3L3 5L7 1" stroke="#0a0b14" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <div class="sc-ticker">${esc(r.ticker)}</div>
+        <div class="sc-name">${esc(r.name)}</div>
+        <div class="sc-badges"><span class="sr-mkt mkt-fh">FH</span>${exch}</div>
+      </div>`;
+    }).join('');
+    return;
+  }
+
+  // Local grid has results — show additional Finnhub matches in the dropdown
   if(!hits.length){if(sec)sec.style.display='none';return;}
   if(sec)sec.style.display='block';
   if(lbl)lbl.textContent=`Finnhub results (${hits.length})`;
@@ -467,7 +491,10 @@ function addCustomStock(ticker,name){
   if(selectedTickers.size>=40)return;
   customStocks.set(ticker,{t:ticker,n:name,s:'Unknown',m:'US'});
   selectedTickers.add(ticker);
-  // Refresh add button states in search results
+  // Mark the Finnhub grid card selected if it's currently shown
+  const gridCard=document.querySelector(`#sp-stockGrid .fh-card[data-tk="${CSS.escape(ticker)}"]`);
+  if(gridCard)gridCard.classList.add('selected');
+  // Refresh add button states in the dropdown
   document.querySelectorAll('#sp-searchResultsList .sp-sr-add').forEach(btn=>{
     const row=btn.closest('.sp-search-result-row');
     if(row&&row.querySelector('.sp-sr-ticker')?.textContent===ticker){
