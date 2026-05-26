@@ -178,7 +178,7 @@ const _debouncedApiSearch=debounce(async function(query){
     const d=await r.json();
     // Filter out tickers already in the curated ALL_STOCKS grid
     const hits=(d.results||[]).filter(x=>!ALL_STOCKS.find(s=>s.t===x.ticker));
-    console.log(`%c[NUMKT Search] Finnhub query "${query}" → ${(d.results||[]).length} raw result(s), ${hits.length} new ticker(s) not in local universe`+(d.cached?' (served from server cache)':''),'color:#84cc16;font-weight:bold');
+    console.log(`%c[NUMKT Search] Finnhub active=${d.finnhub_active} | query="${query}" | raw_from_finnhub=${d.raw_count??'n/a'} | after_filter=${hits.length}`+(d.cached?' (cache)':'')+(d.error?` ⚠ ${d.error}`:'')+(d.note?` ℹ ${d.note}`:''),'color:#84cc16;font-weight:bold');
     SearchCache.set(cacheKey,hits);
     if(hits.length)RecentSearches.add(query);
     _renderApiResults(lst,hits,query,sec,lbl);

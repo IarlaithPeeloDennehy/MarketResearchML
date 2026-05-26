@@ -608,7 +608,8 @@ async def search_stocks(q: str, request: Request, types: str = "stock"):
 
     client = _get_finnhub_client()
     if client is None:
-        return {"results": [], "note": "Finnhub key not configured — search unavailable"}
+        return {"results": [], "finnhub_active": False,
+                "note": "Finnhub key not configured — search unavailable"}
 
     # Map frontend types param to the Finnhub type strings we accept.
     _accepted: dict[str, set] = {
@@ -625,7 +626,8 @@ async def search_stocks(q: str, request: Request, types: str = "stock"):
             loop.run_in_executor(None, lambda: client.symbol_search(q) or {}),
             timeout=5.0,
         )
-        raw     = resp.get("result", [])
+        raw     = resp.get("result", []) if isinstance(resp, dict) else []
+        logger.info(f"Finnhub symbol_search('{q}'): resp type={type(resp).__name__}, raw count={len(raw)}")
         results = []
 
         for r in raw:
@@ -662,14 +664,14 @@ async def search_stocks(q: str, request: Request, types: str = "stock"):
             oldest = min(_search_cache, key=lambda k: _search_cache[k]["ts"])
             del _search_cache[oldest]
 
-        return {"results": results}
+        return {"results": results, "finnhub_active": True, "raw_count": len(raw)}
 
     except asyncio.TimeoutError:
         logger.warning(f"Search timed out for query '{q}'")
-        return {"results": [], "error": "Search timed out — please try again"}
+        return {"results": [], "finnhub_active": True, "error": "Search timed out — please try again"}
     except Exception as exc:
-        logger.warning(f"Stock search failed: {exc}")
-        return {"results": [], "error": "Search temporarily unavailable"}
+        logger.warning(f"Stock search failed: {exc}", exc_info=True)
+        return {"results": [], "finnhub_active": True, "error": f"Search error: {exc}"}
 
 
 # ── Model endpoints ────────────────────────────────────────────────────────
