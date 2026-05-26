@@ -133,7 +133,7 @@ function renderStockGrid(query){
     pool=pool.filter(s=>s.t.toLowerCase().includes(q)||s.n.toLowerCase().includes(q));
   }
   if(!pool.length){
-    grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:40px 0;font-family:\'JetBrains Mono\',monospace;font-size:11px;color:var(--text3)">No stocks match — try searching below.</div>';
+    grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:40px 0;font-family:\'JetBrains Mono\',monospace;font-size:11px;color:var(--text3)">No stocks in local universe match — Finnhub results loading above ↑</div>';
   } else {
     grid.innerHTML=pool.map(s=>{
       const mc=s.m==='US'?'mkt-us':s.m==='UK'?'mkt-uk':'mkt-ie';
@@ -178,6 +178,7 @@ const _debouncedApiSearch=debounce(async function(query){
     const d=await r.json();
     // Filter out tickers already in the curated ALL_STOCKS grid
     const hits=(d.results||[]).filter(x=>!ALL_STOCKS.find(s=>s.t===x.ticker));
+    console.log(`%c[NUMKT Search] Finnhub query "${query}" → ${(d.results||[]).length} raw result(s), ${hits.length} new ticker(s) not in local universe`+(d.cached?' (served from server cache)':''),'color:#84cc16;font-weight:bold');
     SearchCache.set(cacheKey,hits);
     if(hits.length)RecentSearches.add(query);
     _renderApiResults(lst,hits,query,sec,lbl);
@@ -702,7 +703,16 @@ async function runAnalysis(){
       await new Promise(r=>setTimeout(r,280+Math.random()*200));
     }
     document.getElementById(`ls${steps.length-1}`).className='ls done';
-    if(backendResults){cvAccuracy=backendResults.cv_accuracy;cvIC=backendResults.cv_ic??null;featureImportance=backendResults.feature_importance;}
+    if(backendResults){
+      cvAccuracy=backendResults.cv_accuracy;cvIC=backendResults.cv_ic??null;featureImportance=backendResults.feature_importance;
+      console.group('%c[NUMKT Analysis] Data sources','color:#84cc16;font-weight:bold');
+      console.log('Finnhub active (US price data):', backendResults.finnhub_active);
+      console.log('US tickers → Finnhub'+(backendResults.finnhub_active?'':' (fallback: Yahoo Finance — no key)')+':', backendResults.us_tickers);
+      console.log('UK/IE tickers → Yahoo Finance:', backendResults.uk_ie_tickers);
+      console.log('Freshly fetched (cache miss):', backendResults.fresh_fetched, '/', tickers.length);
+      console.log('Model training source:', backendResults.training_source, '('+backendResults.n_training_rows+' rows)');
+      console.groupEnd();
+    }
   }
   await new Promise(r=>setTimeout(r,180));
 
@@ -1066,6 +1076,13 @@ async function runBacktest(){
   const resp=await callBackend('/backtest',{tickers,profile:runResults.profileKey,lookback_years:+document.getElementById('sp-lbSlider').value,forward_months:12});
   const data=resp.ok?resp.data:null;
   btn.disabled=false;btn.textContent='RUN BACKTEST ↗';
+  if(data&&!data.error){
+    console.group('%c[NUMKT Backtest] Data sources','color:#a78bfa;font-weight:bold');
+    console.log('Finnhub active:', data.finnhub_active);
+    console.log('Price data from cache (no new Finnhub/Yahoo fetch):', data.data_from_cache);
+    console.log('Tickers:', data.tickers);
+    console.groupEnd();
+  }
   if(!data||data.error){document.getElementById('btResults').innerHTML=`<div class="bt-error">${data&&data.error?data.error:'Backtest failed — check backend connection.'}</div>`;return;}
   const m=data.metrics;
   if(!m||m.n_periods===0){document.getElementById('btResults').innerHTML='<div class="bt-error">Insufficient price history for backtest. Try adding more tickers or increasing the lookback period.</div>';return;}

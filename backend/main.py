@@ -57,7 +57,7 @@ _FRONTEND_HTML = Path(__file__).parent.parent / "index.html"
 
 from ml.data_fetcher import (fetch_stock_data, fetch_multiple_stocks,
                               get_cache_status, clear_cache as clear_data_cache,
-                              _get_finnhub_client)
+                              _get_finnhub_client, _is_us_ticker)
 from ml.feature_engineering import build_features
 from ml.model import NUMKTEnsemble
 from ml.backtest import run_backtest
@@ -462,6 +462,8 @@ async def analyse(request: Request, req: AnalyseRequest, current_user: User = De
                 f"Background retrain queued ({uncached_count} new ticker(s) fetched)"
             )
 
+        us_tickers    = [t for t in tickers if _is_us_ticker(t)]
+        uk_ie_tickers = [t for t in tickers if not _is_us_ticker(t)]
         return {
             "status":             "ok",
             "timestamp":          datetime.now(timezone.utc).isoformat(),
@@ -474,6 +476,10 @@ async def analyse(request: Request, req: AnalyseRequest, current_user: User = De
             "n_training_rows":    model.n_training_rows,
             "feature_importance": model.feature_importance(),
             "results":            results,
+            "finnhub_active":     _get_finnhub_client() is not None,
+            "fresh_fetched":      uncached_count,
+            "us_tickers":         us_tickers,
+            "uk_ie_tickers":      uk_ie_tickers,
         }
 
     except HTTPException:
@@ -536,6 +542,8 @@ async def backtest(request: Request, req: BacktestRequest, current_user: User = 
             "backtest_period":  f"{req.lookback_years} years",
             "forward_months":   req.forward_months,
             "metrics":          metrics,
+            "finnhub_active":   _get_finnhub_client() is not None,
+            "data_from_cache":  "latest" in _data_cache,
         }
 
     except HTTPException:
