@@ -164,11 +164,14 @@ const _debouncedApiSearch=debounce(async function(query){
 
   // Client-side cache check — avoids a round-trip for identical queries
   const cacheKey=query.toLowerCase();
+  const lbl=document.getElementById('sp-searchResultsLabel');
   const cached=SearchCache.get(cacheKey);
-  if(cached){_renderApiResults(lst,cached,query,sec);return;}
+  if(cached){_renderApiResults(lst,cached,query,sec,lbl);return;}
 
-  sec.style.display='';
-  lst.innerHTML='<div class="sp-search-spinner">Searching Finnhub…</div>';
+  sec.style.display='block';
+  const lbl=document.getElementById('sp-searchResultsLabel');
+  if(lbl)lbl.textContent='Searching Finnhub…';
+  lst.innerHTML='<div class="sp-search-spinner">…</div>';
 
   try{
     const r=await fetch(`/api/search?q=${encodeURIComponent(query)}&types=stock`);
@@ -178,15 +181,17 @@ const _debouncedApiSearch=debounce(async function(query){
     const hits=(d.results||[]).filter(x=>!ALL_STOCKS.find(s=>s.t===x.ticker));
     SearchCache.set(cacheKey,hits);
     if(hits.length)RecentSearches.add(query);
-    _renderApiResults(lst,hits,query,sec);
+    _renderApiResults(lst,hits,query,sec,lbl);
   }catch(e){
+    if(lbl)lbl.textContent='Finnhub results';
     lst.innerHTML='<div class="sp-search-spinner" style="color:var(--red)">Search unavailable — try again.</div>';
   }
 },350);
 
-function _renderApiResults(lst,hits,query,sec){
+function _renderApiResults(lst,hits,query,sec,lbl){
   if(!hits.length){if(sec)sec.style.display='none';return;}
-  if(sec)sec.style.display='';
+  if(sec)sec.style.display='block';
+  if(lbl)lbl.textContent=`Finnhub results (${hits.length})`;
   lst.innerHTML=hits.map(r=>{
     const isSel=selectedTickers.has(r.ticker);
     const exBadge=r.exchange?`<span class="sp-sr-exch">${esc(r.exchange)}</span>`:'';
