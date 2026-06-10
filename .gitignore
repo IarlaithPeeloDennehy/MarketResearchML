@@ -22,6 +22,12 @@ build/
 # VS Code settings
 .vscode/
 
+# Digital Ocean — not used (deployed on Render)
+.do/
+
+# Claude Code local settings — personal user permissions, not project config
+.claude/settings.local.json
+
 # Mac junk
 .DS_Store
 

@@ -68,9 +68,20 @@ PRICE_DIR = _base / "prices"
 # Broadens the cross-sectional universe so factor patterns aren't learned from
 # a single user's narrow watchlist.
 _ANCHOR_TICKERS = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "META",
-    "JPM",  "JNJ",  "PG",    "XOM",  "WMT",
-    "BRK-B","V",    "UNH",   "HD",   "CVX",
+    # Technology
+    "AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "AMD",  "INTC", "CRM",  "ORCL",
+    # Healthcare
+    "JNJ",  "PFE",  "UNH",  "ABBV",  "MRK",  "TMO",  "ABT",  "BMY",  "AMGN", "GILD",
+    # Financials
+    "JPM",  "BAC",  "WFC",  "GS",    "MS",   "BLK",  "C",    "AXP",  "V",    "MA",
+    # Consumer Discretionary / Staples
+    "HD",   "MCD",  "NKE",  "SBUX",  "TGT",  "COST", "WMT",  "PG",   "KO",   "PEP",
+    # Industrials / Energy / Materials
+    "CAT",  "HON",  "UPS",  "GE",    "BA",   "LMT",  "XOM",  "CVX",  "SLB",  "BRK-B",
+    # Sector ETFs — diversify beta profiles across macro regimes
+    "XLK",  "XLF",  "XLV",  "XLE",  "XLI",
+    # Mid/small-cap — different momentum dynamics than mega-caps
+    "IWM",  "SMCI", "CELH",
 ]
 
 # Minimum real labelled rows before we trust the model.

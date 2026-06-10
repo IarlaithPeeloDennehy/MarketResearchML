@@ -373,7 +373,8 @@ def _fetch_one(ticker: str, start: str, end: str) -> dict | None:
                 return None
 
             prices = hist[["Close", "Volume"]].copy()
-            prices.index = pd.to_datetime(prices.index).tz_localize(None)
+            idx = pd.to_datetime(prices.index)
+            prices.index = idx.tz_convert(None) if idx.tz is not None else idx
 
             try:
                 info = t.info or {}

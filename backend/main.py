@@ -158,6 +158,7 @@ _SEARCH_CACHE_MAX = 500   # evict oldest when this is exceeded
 # ── Background retraining ──────────────────────────────────────────────────
 _last_retrain: float = 0.0          # Unix timestamp of last background retrain
 _RETRAIN_COOLDOWN    = 3600         # seconds — don't retrain more than once per hour
+_pretrain_running: bool = False     # guard against concurrent startup pre-trains
 
 # ── Public insights snapshot ───────────────────────────────────────────────
 _last_insights_build: float = 0.0   # Unix timestamp of last snapshot build
@@ -227,6 +228,74 @@ async def _background_retrain(raw_data: dict, features_df) -> None:
             logger.warning("Background retrain: run_backtest returned no trained model")
     except Exception as exc:
         logger.error(f"Background retrain failed (non-fatal): {exc}", exc_info=True)
+
+
+def _is_model_stale(max_age_days: int = 7) -> bool:
+    """Return True if the default model is missing or older than max_age_days."""
+    saved = NUMKTEnsemble.list_saved()
+    if not saved:
+        return True
+    try:
+        trained_at = datetime.fromisoformat(
+            saved[0]["trained_at"].replace("Z", "+00:00")
+        )
+        return (datetime.now(timezone.utc) - trained_at).days >= max_age_days
+    except Exception:
+        return True
+
+
+async def _startup_pretrain() -> None:
+    """Fetch the anchor universe and train a fresh 'default' model.
+
+    Fires at startup when no model exists or the model is stale.
+    Non-blocking — runs in executor so uvicorn workers are never held.
+    """
+    global _pretrain_running, _last_retrain
+    if _pretrain_running:
+        return
+    _pretrain_running = True
+    # Stamp the retrain cooldown immediately so a concurrent /analyse request
+    # doesn't also fire _background_retrain while we're in flight.
+    _last_retrain = datetime.now(timezone.utc).timestamp()
+    try:
+        from ml.model import _ANCHOR_TICKERS
+        logger.info(f"Startup pre-train: fetching {len(_ANCHOR_TICKERS)} anchor tickers …")
+        raw_data, _ = await fetch_multiple_stocks(_ANCHOR_TICKERS, lookback_years=5)
+        if len(raw_data) < 3:
+            logger.warning(
+                f"Startup pre-train: only {len(raw_data)} tickers loaded, need 3+ — skipping"
+            )
+            return
+        features_df = build_features(raw_data)
+        loop = asyncio.get_running_loop()
+        metrics = await loop.run_in_executor(
+            None,
+            lambda: run_backtest(
+                features_df=features_df,
+                raw_data=raw_data,
+                profile="quality",
+                forward_months=12,
+                rebalance_months=3,
+                train_model=True,
+                model_name="default",
+            ),
+        )
+        if metrics.get("training", {}).get("trained"):
+            trained_model = NUMKTEnsemble.load("default")
+            if trained_model:
+                _model_cache["__trained__"] = trained_model
+                _last_retrain = datetime.now(timezone.utc).timestamp()
+                logger.info(
+                    f"Startup pre-train complete — "
+                    f"{trained_model.n_training_rows} rows, "
+                    f"IC={trained_model.cv_ic:.4f}, acc={trained_model.cv_accuracy:.3f}"
+                )
+        else:
+            logger.warning("Startup pre-train: backtest returned no trained model")
+    except Exception as exc:
+        logger.error(f"Startup pre-train failed (non-fatal): {exc}", exc_info=True)
+    finally:
+        _pretrain_running = False
 
 
 # ── Load any previously trained models on startup ─────────────────────────
@@ -356,8 +425,12 @@ async def startup():
         if model:
             _model_cache["__trained__"] = model
             logger.info("Loaded saved 'default' model into memory")
+        if _is_model_stale():
+            logger.info("Saved model is stale (>7 days) — queuing background pre-train")
+            _fire_task(_startup_pretrain())
     else:
-        logger.info("No saved models found — will use synthetic labels until backtest runs")
+        logger.info("No saved model — queuing startup pre-train on anchor universe")
+        _fire_task(_startup_pretrain())
 
     # ── Warm the public insights snapshot ──────────────────────────────────
     try:
