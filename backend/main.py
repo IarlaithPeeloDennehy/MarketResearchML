@@ -259,8 +259,22 @@ async def _startup_pretrain() -> None:
     _last_retrain = datetime.now(timezone.utc).timestamp()
     try:
         from ml.model import _ANCHOR_TICKERS
-        logger.info(f"Startup pre-train: fetching {len(_ANCHOR_TICKERS)} anchor tickers …")
-        raw_data, _ = await fetch_multiple_stocks(_ANCHOR_TICKERS, lookback_years=5)
+        from ml.data_fetcher import _price_cache_path, _cache_is_fresh
+
+        # Only train on tickers already in the price cache — never fetch fresh
+        # data at startup. Fetching all 58 anchor tickers would fire ~580 Finnhub
+        # API calls in the first minute, exhausting the free-tier rate limit (60/min)
+        # before any user request can succeed. The _background_retrain triggered by
+        # user requests grows the training universe over time instead.
+        cached_tickers = [t for t in _ANCHOR_TICKERS if _cache_is_fresh(_price_cache_path(t))]
+        if len(cached_tickers) < 3:
+            logger.info(
+                f"Startup pre-train: only {len(cached_tickers)} anchor tickers cached "
+                "— skipping until user requests populate the cache"
+            )
+            return
+        logger.info(f"Startup pre-train: training on {len(cached_tickers)} cached anchor tickers")
+        raw_data, _ = await fetch_multiple_stocks(cached_tickers, lookback_years=5)
         if len(raw_data) < 3:
             logger.warning(
                 f"Startup pre-train: only {len(raw_data)} tickers loaded, need 3+ — skipping"
@@ -499,6 +513,30 @@ def api_status():
         "saved_models": len(saved),
         "best_model":   saved[0] if saved else None,
     }
+
+
+# ── Fetch diagnostic (no auth) ────────────────────────────────────────────
+
+@app.get("/api/debug/fetch-test")
+@limiter.limit("5/minute")
+async def fetch_test(request: Request, ticker: str = "AAPL"):
+    """Diagnostic: test the data fetch pipeline for one ticker. No auth required."""
+    ticker = ticker.strip().upper()
+    try:
+        result = await fetch_stock_data(ticker, lookback_years=1)
+        if result is None:
+            return {"status": "fail", "ticker": ticker,
+                    "detail": "fetch_stock_data returned None — check server logs for error"}
+        prices = result.get("_raw", {}).get("prices")
+        return {
+            "status":         "ok",
+            "ticker":         ticker,
+            "bars":           len(prices) if prices is not None else 0,
+            "last_price":     result.get("last_price"),
+            "finnhub_active": _get_finnhub_client() is not None,
+        }
+    except Exception as exc:
+        return {"status": "error", "ticker": ticker, "detail": str(exc)}
 
 
 # ── Public insights (no auth) ──────────────────────────────────────────────
