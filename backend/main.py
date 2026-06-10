@@ -158,7 +158,8 @@ _SEARCH_CACHE_MAX = 500   # evict oldest when this is exceeded
 # ── Background retraining ──────────────────────────────────────────────────
 _last_retrain: float = 0.0          # Unix timestamp of last background retrain
 _RETRAIN_COOLDOWN    = 3600         # seconds — don't retrain more than once per hour
-_pretrain_running: bool = False     # guard against concurrent startup pre-trains
+_head_train_running: bool = False   # guard against concurrent startup head-training
+                                    # ("pre-training" now means the offline encoder)
 
 # ── Public insights snapshot ───────────────────────────────────────────────
 _last_insights_build: float = 0.0   # Unix timestamp of last snapshot build
@@ -244,16 +245,18 @@ def _is_model_stale(max_age_days: int = 7) -> bool:
         return True
 
 
-async def _startup_pretrain() -> None:
-    """Fetch the anchor universe and train a fresh 'default' model.
+async def _startup_train_head() -> None:
+    """Fetch the anchor universe and train a fresh 'default' head model.
 
-    Fires at startup when no model exists or the model is stale.
-    Non-blocking — runs in executor so uvicorn workers are never held.
+    This trains the RF+GB *head* (which consumes encoder embeddings when one is
+    loaded). It is NOT the self-supervised pre-training — that happens offline in
+    scripts/pretrain_encoder.py. Fires at startup when no head model exists or it
+    is stale. Non-blocking — runs in executor so uvicorn workers are never held.
     """
-    global _pretrain_running, _last_retrain
-    if _pretrain_running:
+    global _head_train_running, _last_retrain
+    if _head_train_running:
         return
-    _pretrain_running = True
+    _head_train_running = True
     # Stamp the retrain cooldown immediately so a concurrent /analyse request
     # doesn't also fire _background_retrain while we're in flight.
     _last_retrain = datetime.now(timezone.utc).timestamp()
@@ -269,15 +272,15 @@ async def _startup_pretrain() -> None:
         cached_tickers = [t for t in _ANCHOR_TICKERS if _cache_is_fresh(_price_cache_path(t))]
         if len(cached_tickers) < 3:
             logger.info(
-                f"Startup pre-train: only {len(cached_tickers)} anchor tickers cached "
+                f"Startup head-train: only {len(cached_tickers)} anchor tickers cached "
                 "— skipping until user requests populate the cache"
             )
             return
-        logger.info(f"Startup pre-train: training on {len(cached_tickers)} cached anchor tickers")
+        logger.info(f"Startup head-train: training on {len(cached_tickers)} cached anchor tickers")
         raw_data, _ = await fetch_multiple_stocks(cached_tickers, lookback_years=5)
         if len(raw_data) < 3:
             logger.warning(
-                f"Startup pre-train: only {len(raw_data)} tickers loaded, need 3+ — skipping"
+                f"Startup head-train: only {len(raw_data)} tickers loaded, need 3+ — skipping"
             )
             return
         features_df = build_features(raw_data)
@@ -300,16 +303,16 @@ async def _startup_pretrain() -> None:
                 _model_cache["__trained__"] = trained_model
                 _last_retrain = datetime.now(timezone.utc).timestamp()
                 logger.info(
-                    f"Startup pre-train complete — "
+                    f"Startup head-train complete — "
                     f"{trained_model.n_training_rows} rows, "
                     f"IC={trained_model.cv_ic:.4f}, acc={trained_model.cv_accuracy:.3f}"
                 )
         else:
-            logger.warning("Startup pre-train: backtest returned no trained model")
+            logger.warning("Startup head-train: backtest returned no trained model")
     except Exception as exc:
-        logger.error(f"Startup pre-train failed (non-fatal): {exc}", exc_info=True)
+        logger.error(f"Startup head-train failed (non-fatal): {exc}", exc_info=True)
     finally:
-        _pretrain_running = False
+        _head_train_running = False
 
 
 # ── Load any previously trained models on startup ─────────────────────────
@@ -353,6 +356,76 @@ def _run_migrations() -> None:
 
     alembic_command.upgrade(cfg, "head")
     logger.info(f"Migrations applied (was at revision: {current or 'none'})")
+
+
+def _bootstrap_encoder() -> None:
+    """Download (if needed) and load the offline-pretrained price encoder.
+
+    Scenario-1 production half: the heavy training happened offline on a GPU
+    box; here we just fetch the frozen checkpoint from object storage and load
+    it for CPU inference. Fully non-fatal — any failure (torch absent, no URL,
+    download/parse error, USE_ENCODER off) leaves the app in price-ranks-only
+    mode, identical to its pre-encoder behaviour.
+
+    Env vars:
+      USE_ENCODER       "0"/"false" to disable (default on)
+      ENCODER_URL       object-storage URL of encoder.pt (downloaded if missing)
+      ENCODER_VERSION   optional expected version hash (logged on mismatch)
+    """
+    from ml.embedding_features import set_encoder
+    from ml.encoder import load_encoder
+
+    if os.environ.get("USE_ENCODER", "1").strip().lower() in ("0", "false", "no", "off"):
+        logger.info("USE_ENCODER disabled — price-ranks-only mode.")
+        set_encoder(None)
+        return
+
+    cache_root = os.environ.get("CACHE_DIR")
+    base = Path(cache_root) if cache_root else Path(__file__).parent / "cache"
+    model_dir = base / "models"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    ckpt = model_dir / "encoder.pt"
+
+    url = os.environ.get("ENCODER_URL")
+    if url and not ckpt.exists():
+        try:
+            logger.info(f"Downloading encoder checkpoint from {url} …")
+            with _requests.get(url, stream=True, timeout=180) as resp:
+                resp.raise_for_status()
+                with open(ckpt, "wb") as fh:
+                    for chunk in resp.iter_content(chunk_size=1 << 20):
+                        fh.write(chunk)
+            logger.info(f"Encoder checkpoint saved to {ckpt}")
+        except Exception as exc:
+            logger.warning(f"Encoder download failed (non-fatal): {exc}")
+
+    enc = load_encoder(ckpt)
+    if enc is None:
+        logger.info("No usable encoder checkpoint — price-ranks-only mode.")
+        set_encoder(None)
+        return
+
+    want = os.environ.get("ENCODER_VERSION")
+    if want and enc.version != want:
+        logger.warning(
+            f"Loaded encoder version {enc.version} != ENCODER_VERSION={want}. "
+            "Head model will be re-fit on next retrain to match."
+        )
+    set_encoder(enc)
+
+
+async def _warm_reference_etfs(tickers: list[str]) -> None:
+    """Cache SPY + sector-SPDR price series for the encoder's market/sector
+    channels. Background, non-fatal — only fetches what isn't already fresh."""
+    try:
+        from ml.data_fetcher import _price_cache_path, _cache_is_fresh
+        missing = [t for t in tickers if not _cache_is_fresh(_price_cache_path(t))]
+        if not missing:
+            return
+        logger.info(f"Warming {len(missing)} reference ETF(s) for encoder channels: {missing}")
+        await fetch_multiple_stocks(missing, lookback_years=20)
+    except Exception as exc:
+        logger.warning(f"Reference-ETF warm failed (non-fatal): {exc}")
 
 
 @app.on_event("startup")
@@ -427,6 +500,25 @@ async def startup():
             "learning between deploys."
         )
 
+    # ── Load the offline-pretrained encoder (non-fatal, opt-in) ────────────
+    # Done before model load / head training so feature building uses embeddings.
+    try:
+        await loop.run_in_executor(None, _bootstrap_encoder)
+    except Exception as exc:
+        logger.warning(f"Encoder bootstrap skipped (non-fatal): {exc}")
+
+    # ── Warm reference ETFs for the market/sector channels ─────────────────
+    # The encoder's excess_ret_vs_market / rel_strength_vs_sector channels need
+    # SPY + sector-SPDR price series cached. Fetch them in the background so the
+    # channels are populated; missing references just yield neutral channels.
+    try:
+        from ml.embedding_features import encoder_enabled
+        if encoder_enabled():
+            from ml.channels import REFERENCE_TICKERS
+            _fire_task(_warm_reference_etfs(list(REFERENCE_TICKERS)))
+    except Exception as exc:
+        logger.warning(f"Reference-ETF warm skipped (non-fatal): {exc}")
+
     # ── Load saved ML model ────────────────────────────────────────────────
     saved = NUMKTEnsemble.list_saved()
     if saved:
@@ -440,11 +532,11 @@ async def startup():
             _model_cache["__trained__"] = model
             logger.info("Loaded saved 'default' model into memory")
         if _is_model_stale():
-            logger.info("Saved model is stale (>7 days) — queuing background pre-train")
-            _fire_task(_startup_pretrain())
+            logger.info("Saved model is stale (>7 days) — queuing background head-train")
+            _fire_task(_startup_train_head())
     else:
-        logger.info("No saved model — queuing startup pre-train on anchor universe")
-        _fire_task(_startup_pretrain())
+        logger.info("No saved model — queuing startup head-train on anchor universe")
+        _fire_task(_startup_train_head())
 
     # ── Warm the public insights snapshot ──────────────────────────────────
     try:
@@ -590,7 +682,7 @@ async def analyse(request: Request, req: AnalyseRequest, current_user: User = De
         # Otherwise fall back to per-profile model with synthetic labels
         if "__trained__" in _model_cache:
             model = _model_cache["__trained__"]
-            logger.info(f"Using pre-trained model "
+            logger.info(f"Using trained head model "
                         f"({model.training_source}, {model.n_training_rows} rows)")
         else:
             cache_key = f"{req.profile}_{req.risk}_{req.lookback_years}"

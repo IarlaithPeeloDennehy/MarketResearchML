@@ -32,6 +32,12 @@ import numpy as np
 from typing import Optional
 import logging
 
+from .embedding_features import (
+    point_in_time_embedding,
+    encoder_enabled,
+    standardize_emb_columns,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -222,10 +228,20 @@ def build_features(raw_data: dict, profile: str = "quality") -> pd.DataFrame:
     model has enough rows to train on even with a small universe.
     Returns a DataFrame with FEATURE_COLS plus metadata columns.
     """
+    emb_on = encoder_enabled()
     rows = []
     for ticker, stock in raw_data.items():
         row = extract_snapshot_features(stock)
         row["ticker"] = ticker
+        if emb_on:
+            prices = stock.get("prices")
+            if prices is None and "_raw" in stock:
+                prices = stock["_raw"].get("prices")
+            close = prices["Close"] if prices is not None and not prices.empty else None
+            if close is not None and len(close) > 1:
+                row.update(point_in_time_embedding(
+                    close, end_idx=len(close) - 1, ticker=ticker
+                ))
         rows.append(row)
 
     if not rows:
@@ -252,6 +268,11 @@ def build_features(raw_data: dict, profile: str = "quality") -> pd.DataFrame:
         if col in df.columns:
             median = df[col].median()
             df[col] = df[col].fillna(median if pd.notna(median) else 0.5)
+
+    # Standardize encoder embedding columns cross-sectionally (matches the
+    # rank-normalization of price/fundamental features). No-op when disabled.
+    if emb_on:
+        df = standardize_emb_columns(df)
 
     logger.info(f"Built feature matrix: {df.shape[0]} stocks × {df.shape[1]} columns")
     return df
