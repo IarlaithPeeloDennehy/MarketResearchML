@@ -1,0 +1,14 @@
+# Offline GPU training deps for scripts/pretrain_encoder.py + build_pretrain_corpus.py.
+# These are NOT installed on Render — production only needs the CPU torch wheel
+# listed in backend/requirements.txt.
+#
+# Install the CUDA build of torch from the official index, e.g.:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+# then:
+#   pip install -r scripts/requirements-pretrain.txt
+
+torch>=2.2          # install the CUDA wheel separately (see note above)
+numpy>=1.26
+pandas>=2.1
+pyarrow>=15.0       # parquet read/write
+yfinance>=0.2.50    # corpus download

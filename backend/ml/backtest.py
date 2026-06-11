@@ -36,6 +36,11 @@ import logging
 
 from .feature_engineering import PRICE_FEATURE_COLS
 from .model import NUMKTEnsemble
+from .embedding_features import (
+    point_in_time_embedding,
+    encoder_enabled,
+    standardize_emb_columns,
+)
 
 logger = logging.getLogger(__name__)
 TRADING_DAYS_PER_MONTH = 21
@@ -159,6 +164,8 @@ def run_backtest(
 
         # ── Build feature snapshot at start_idx ───────────────────────────
         snap_features = {}
+        emb_features = {}
+        emb_on = encoder_enabled()
         for ticker in tickers:
             close = price_series[ticker]
             p     = close.iloc[:start_idx] if start_idx > 0 else close
@@ -191,6 +198,12 @@ def run_backtest(
             snap["price_vs_52w_high"] = float(p.iloc[-1]/hi-1) if hi>0 else 0.0
 
             snap_features[ticker] = snap
+            if emb_on:
+                # end_idx = start_idx-1 matches the snapshot's close.iloc[:start_idx]
+                # (strictly before the forward window) — no look-ahead.
+                emb_features[ticker] = point_in_time_embedding(
+                    close, end_idx=start_idx - 1, ticker=ticker
+                )
 
         if len(snap_features) < 2:
             logger.info(f"Period {period}: only {len(snap_features)} snapshots, skip")
@@ -205,6 +218,12 @@ def run_backtest(
                 snap_df[col+"_rank"] = snap_df[col].rank(pct=True)
             elif col+"_rank" not in snap_df.columns:
                 snap_df[col+"_rank"] = 0.5
+
+        # Attach standardized encoder embeddings (cross-sectional, per period)
+        if emb_on and emb_features:
+            emb_df = standardize_emb_columns(pd.DataFrame(emb_features).T)
+            for c in emb_df.columns:
+                snap_df[c] = emb_df[c].reindex(snap_df.index).fillna(0.0)
 
         # ── Compute ACTUAL forward returns ─────────────────────────────────
         fwd_rets = {}
@@ -241,6 +260,9 @@ def run_backtest(
                     for col in PRICE_FEATURE_COLS
                     if f"{col}_rank" in snap_df.columns
                 }
+                for c in snap_df.columns:
+                    if c.startswith("emb_"):
+                        row_dict[c] = float(snap_df.loc[ticker, c])
                 row_dict["ticker"]      = ticker
                 row_dict["_period_idx"] = period
                 label = 1 if ret >= median_ret else 0

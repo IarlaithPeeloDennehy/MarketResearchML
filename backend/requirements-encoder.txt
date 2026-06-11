@@ -1,0 +1,16 @@
+# Optional production dependency for the offline-pretrained price encoder.
+#
+# The base app (requirements.txt) runs WITHOUT this — it degrades to
+# price-ranks-only when torch is absent, USE_ENCODER=0, or no checkpoint is
+# loaded. Install this ONLY when enabling the encoder so a torch wheel/resolution
+# issue can never break the core service.
+#
+# To enable on Render:
+#   pip install -r backend/requirements.txt -r backend/requirements-encoder.txt
+#   and set USE_ENCODER=1, ENCODER_URL=<encoder.pt object-storage URL>
+#
+# CPU inference only. The +cpu wheel keeps the image small and must match the
+# torch major used offline by scripts/pretrain_encoder.py. torch + uvicorn +
+# sklearn may exceed Render's 512MB free tier — size the instance accordingly.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.5.1+cpu

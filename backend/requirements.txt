@@ -15,3 +15,8 @@ alembic>=1.13.0
 bcrypt>=4.0.0
 slowapi>=0.1.9
 finnhub-python>=2.4.19
+# NOTE: torch is intentionally NOT here. The offline-pretrained encoder is
+# opt-in and the app degrades gracefully without torch (price-ranks-only). To
+# enable the encoder in production, also install backend/requirements-encoder.txt
+# and set USE_ENCODER=1 + ENCODER_URL. Keeping torch out of the base deploy means
+# a torch wheel/resolution issue can never break the core service.
