@@ -271,6 +271,15 @@ def run_backtest(
         )
         model.save(model_name)
 
+        # ── Monitoring: capture training baseline (additive, fully wrapped) ──
+        # Freezes feature/prediction distributions + training IC so live drift
+        # and IC degradation can be measured later. Never affects training.
+        try:
+            from monitoring import capture_training_baseline
+            capture_training_baseline(model, features_df)
+        except Exception:
+            pass
+
         # ── Score all periods with ML model, then compute every metric ──────
         #
         # Training periods → OOF predictions from cross-validation.
