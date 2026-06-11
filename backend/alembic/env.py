@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 # Import models so SQLModel.metadata is populated
 import auth.models  # noqa: F401
+import monitoring.models  # noqa: F401  (additive — model edge monitoring tables)
 from sqlmodel import SQLModel
 
 config = context.config

@@ -547,6 +547,18 @@ async def startup():
     except Exception as exc:
         logger.warning(f"Insights warm-up skipped: {exc}")
 
+    # ── Monitoring: mature delayed labels → rolling IC → recommendation ─────
+    # Background, fully wrapped. Realized forward returns only exist once the
+    # horizon has elapsed, so this fills what's ready and refreshes the edge
+    # recommendation. Never blocks startup.
+    try:
+        import monitoring
+        active = _model_cache.get("__trained__")
+        if active is not None:
+            _fire_task(asyncio.to_thread(monitoring.mature_and_evaluate, active))
+    except Exception as exc:
+        logger.warning(f"Monitoring evaluation skipped (non-fatal): {exc}")
+
 
 # ── Schemas ────────────────────────────────────────────────────────────────
 
@@ -704,6 +716,15 @@ async def analyse(request: Request, req: AnalyseRequest, current_user: User = De
         # Cache for backtest
         _data_cache["latest"]           = raw_data
         _data_cache["latest_features"]  = features_df
+
+        # Monitoring: log predictions + feature/prediction drift for this batch.
+        # Runs off the response path in a worker thread and is fully wrapped —
+        # a monitoring/DB failure can never affect the /analyse response.
+        try:
+            import monitoring
+            _fire_task(asyncio.to_thread(monitoring.record_analyse, model, features_df, results))
+        except Exception:
+            pass
 
         # Trigger background retraining when new data was fetched from Yahoo
         # and the cooldown has elapsed — runs after the response is returned
