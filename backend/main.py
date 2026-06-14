@@ -262,10 +262,11 @@ async def _startup_pretrain() -> None:
         from ml.data_fetcher import _price_cache_path, _cache_is_fresh
 
         # Only train on tickers already in the price cache — never fetch fresh
-        # data at startup. Fetching all 58 anchor tickers would fire ~580 Finnhub
-        # API calls in the first minute, exhausting the free-tier rate limit (60/min)
-        # before any user request can succeed. The _background_retrain triggered by
-        # user requests grows the training universe over time instead.
+        # data at startup. Bulk-fetching the full anchor universe (~180 names)
+        # would fire hundreds of Finnhub calls in the first minute, exhausting
+        # the free-tier rate limit (60/min) before any user request can succeed.
+        # The _background_retrain triggered by user requests grows the training
+        # universe over time instead.
         cached_tickers = [t for t in _ANCHOR_TICKERS if _cache_is_fresh(_price_cache_path(t))]
         if len(cached_tickers) < 3:
             logger.info(
