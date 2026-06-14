@@ -111,21 +111,36 @@ def run_backtest(
     logger.info(f"Backtest: {len(tickers)} tickers, {n_periods} periods, "
                 f"{forward_months}M forward window, {effective_lookback_yrs}y effective")
 
-    # ── Train / holdout split ──────────────────────────────────────────────
-    # Hold out the last ~20% of periods so the model can be evaluated on
-    # data it never saw during training. Requires at least 4 periods to be
-    # worth splitting; below that threshold all data goes to training and
-    # holdout_ic is skipped.
+    # ── Train / holdout split with purge + embargo ─────────────────────────
+    # Hold out the last ~20% of periods so the model can be evaluated on data
+    # it never saw during training.
+    #
+    # PURGE/EMBARGO: forward windows are `forward_days` long but periods are
+    # only `rebalance_days` apart, so a training period's label window overlaps
+    # the holdout's by up to forward_days/rebalance_days periods. Without a gap,
+    # the model trains on outcomes that overlap the very returns it is "tested"
+    # on (overlapping-label leakage, López de Prado) — which inflates holdout
+    # IC. We therefore DISCARD the `embargo_periods` training periods adjacent
+    # to the holdout so the last *used* training label window ends before the
+    # first holdout window begins. Requires at least 4 periods to split.
+    embargo_periods = forward_days // rebalance_days   # e.g. 252//63 = 4
     if n_periods >= 4:
         n_holdout    = max(1, n_periods // 5)
         train_cutoff = n_periods - n_holdout
+        # Don't let the embargo starve training — keep ≥2 training periods.
+        train_end = train_cutoff - embargo_periods
+        if train_end < 2:
+            train_end = train_cutoff   # too little data to embargo cleanly
     else:
         n_holdout    = 0
         train_cutoff = n_periods
+        train_end    = n_periods
 
     logger.info(
-        f"Train/holdout split: {train_cutoff} training periods, "
-        f"{n_holdout} holdout periods"
+        f"Train/holdout split: train periods [0,{train_end}), "
+        f"embargo gap [{train_end},{train_cutoff}), "
+        f"holdout periods [{train_cutoff},{n_periods}) "
+        f"(embargo={embargo_periods} periods, forward={forward_months}M)"
     )
 
     # ── Accumulators ──────────────────────────────────────────────────────
@@ -244,14 +259,16 @@ def run_backtest(
                 row_dict["ticker"]      = ticker
                 row_dict["_period_idx"] = period
                 label = 1 if ret >= median_ret else 0
-                if period < train_cutoff:
+                if period < train_end:
                     all_feature_rows.append(row_dict)
                     all_return_labels.append(label)
                     all_forward_returns.append(ret)
-                else:
+                elif period >= train_cutoff:
                     holdout_feature_rows.append(row_dict)
                     holdout_return_labels.append(label)
                     holdout_forward_returns.append(ret)
+                # else: embargo gap [train_end, train_cutoff) — discard so the
+                # last training label window cannot overlap any holdout window.
 
         logger.info(f"Period {period}: {len(common)} stocks | bench={np.mean(rv):.2%}")
 
@@ -268,6 +285,15 @@ def run_backtest(
             return_labels   = all_return_labels,
             forward_returns = all_forward_returns,
             features_df     = features_df,
+            # CV-fold embargo is intentionally left at 0. With ~12 overlapping
+            # training periods, embargo=forward/rebalance halves OOF coverage
+            # and restricts it to the most recent (single-regime) periods,
+            # making oof_ic unstable and regime-biased — worse, not better, as a
+            # diagnostic. The train↔holdout embargo above is what guards the
+            # reported OOS edge; oof_ic stays slightly optimistic but stable and
+            # is only a diagnostic. Raise this once enough periods accrue that
+            # embargoed coverage spans multiple regimes.
+            embargo         = 0,
         )
         model.save(model_name)
 
@@ -293,16 +319,23 @@ def run_backtest(
         # All IC, hit-rate, Sharpe, alpha, drawdown figures are computed from
         # these ML scores — not from the old hand-coded factor formula.
 
-        holdout_ic      = None
-        period_examples = []
-        prev_top_set    = set()
+        holdout_ic       = None   # pooled across all holdout rows (kept for continuity)
+        holdout_ic_mean  = None   # mean of per-period holdout ICs (the honest metric)
+        holdout_icir     = None
+        period_examples  = []
+        prev_top_set     = set()
 
         if model.is_fitted:
             try:
                 # ── 1. Training period scores (OOF) ───────────────────────
+                # The model appends current-snapshot rows after the backtest
+                # rows during fit, so _oof_proba is at least as long as
+                # all_feature_rows; the first len(all_feature_rows) entries map
+                # back to our rows in order. Uncovered rows (first period) are
+                # NaN and are dropped per-period below.
                 if (model._oof_proba is not None
-                        and len(model._oof_proba) == len(all_feature_rows)):
-                    train_scores = model._oof_proba
+                        and len(model._oof_proba) >= len(all_feature_rows)):
+                    train_scores = model._oof_proba[:len(all_feature_rows)]
                 else:
                     logger.warning(
                         "OOF predictions unavailable — falling back to in-sample "
@@ -367,6 +400,25 @@ def run_backtest(
                     })
                     df_ex["correct"] = df_ex["pred_top"] == df_ex["actual_top"]
 
+                    # Per-period holdout IC (the honest metric). The pooled
+                    # holdout_ic above mixes overlapping forward windows across
+                    # periods and over-states stability; the per-period mean and
+                    # its IR are the figures to trust. ICIR remains optimistic
+                    # while holdout periods overlap (12M windows, 3M step).
+                    ho_period_ics = []
+                    for _p, _g in df_ex.groupby("period"):
+                        if len(_g) > 2 and _g["model_score"].nunique() > 1:
+                            _ic, _ = spearmanr(_g["model_score"], _g["actual_return"])
+                            if np.isfinite(_ic):
+                                ho_period_ics.append(float(_ic))
+                    if ho_period_ics:
+                        holdout_ic_mean = round(float(np.mean(ho_period_ics)), 4)
+                    if len(ho_period_ics) > 1:
+                        holdout_icir = round(
+                            float(np.mean(ho_period_ics) /
+                                  (np.std(ho_period_ics) + 1e-9)), 3
+                        )
+
                     for p_idx, grp_ex in df_ex.groupby("period"):
                         grp_ex = grp_ex.sort_values("model_score", ascending=False)
                         period_examples.append({
@@ -408,6 +460,14 @@ def run_backtest(
                 # ── 4. Per-period metrics from ML scores ───────────────────
                 for p_idx, grp in df_ml.groupby("period"):
                     if p_idx not in bench_ret_by_period:
+                        continue
+
+                    # Drop rows with no OOF score (first training period is never
+                    # in a CV test fold). A period left with <2 scored names can't
+                    # produce a cross-sectional metric and is skipped entirely so
+                    # benchmark/portfolio series stay aligned.
+                    grp = grp.dropna(subset=["ml_score"])
+                    if len(grp) < 2:
                         continue
 
                     benchmark_returns.append(bench_ret_by_period[p_idx])
@@ -472,6 +532,8 @@ def run_backtest(
             "cv_accuracy":     round(model.cv_accuracy, 4),
             "oof_ic":          round(model.cv_ic, 4),
             "holdout_ic":      holdout_ic,
+            "holdout_ic_mean": holdout_ic_mean,
+            "holdout_icir":    holdout_icir,
             "period_examples": period_examples,
             "model_name":      model_name,
             "message": (

@@ -39,8 +39,9 @@ predict_proba(), save(), load(), list_saved() all behave identically.
 
 import numpy as np
 import pandas as pd
+from sklearn.base import clone
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.model_selection import TimeSeriesSplit, cross_val_predict
+from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import RobustScaler
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
@@ -177,6 +178,7 @@ class NUMKTEnsemble:
         return_labels:   list[int],
         forward_returns: list[float] | None = None,
         features_df:     pd.DataFrame | None = None,
+        embargo:         int = 0,
     ) -> "NUMKTEnsemble":
         """
         Train on real historical outcomes supplied by the backtest runner.
@@ -211,8 +213,11 @@ class NUMKTEnsemble:
         df = pd.DataFrame(feature_rows).fillna(0.5)
         y  = np.array(return_labels)
 
-        # Extract period groups from backtest rows so CV respects time boundaries
-        groups = df["_period_idx"].values if "_period_idx" in df.columns else None
+        # Extract period groups from the rows (not the fillna'd frame, which
+        # would coerce missing _period_idx to 0.5). Current-snapshot rows have
+        # no _period_idx and are mapped to the 999_999 sentinel so the
+        # period-group CV excludes them from every test fold.
+        groups = np.array([float(r.get("_period_idx", 999_999)) for r in feature_rows])
 
         rank_cols = self._select_rank_cols(df)
         if not rank_cols:
@@ -231,14 +236,20 @@ class NUMKTEnsemble:
             )
             return self._fit_from_price_cache(df)
 
-        self._run_cv_and_fit(X, y, groups=groups)
+        self._run_cv_and_fit(X, y, groups=groups, embargo=embargo)
 
-        # IC from OOF predictions — genuinely out-of-sample
+        # IC from OOF predictions — genuinely out-of-sample. Uncovered rows
+        # (first period + snapshot sentinel) are NaN and excluded.
         if (forward_returns is not None
                 and len(forward_returns) == len(X)
                 and self._oof_proba is not None):
-            ic, _ = spearmanr(self._oof_proba, forward_returns)
-            self.cv_ic = float(ic) if np.isfinite(ic) else 0.0
+            fr      = np.asarray(forward_returns, dtype=float)
+            covered = np.isfinite(self._oof_proba)
+            if covered.sum() >= 10:
+                ic, _ = spearmanr(self._oof_proba[covered], fr[covered])
+                self.cv_ic = float(ic) if np.isfinite(ic) else 0.0
+            else:
+                self.cv_ic = 0.0
             logger.info(f"OOF IC (Spearman): {self.cv_ic:.4f}")
         else:
             self.cv_ic = 0.0
@@ -374,7 +385,7 @@ class NUMKTEnsemble:
         # IC from OOF predictions — exclude uncovered rows (zeros from t_start=0
         # and current-snapshot sentinel) to avoid diluting the IC with artifacts.
         if self._oof_proba is not None and len(self._oof_proba) == len(fwd_arr):
-            covered = self._oof_proba > 1e-9
+            covered = np.isfinite(self._oof_proba)
             if covered.sum() >= 10:
                 ic, _ = spearmanr(self._oof_proba[covered], fwd_arr[covered])
                 self.cv_ic = float(ic) if np.isfinite(ic) else 0.0
@@ -685,7 +696,7 @@ class NUMKTEnsemble:
 
 
     @staticmethod
-    def _period_group_cv(groups: np.ndarray, n_splits: int):
+    def _period_group_cv(groups: np.ndarray, n_splits: int, embargo: int = 0):
         """Time-respecting group CV: test periods are always strictly after train periods.
 
         Ensures all observations from the same time period are on the same
@@ -693,10 +704,16 @@ class NUMKTEnsemble:
         AAPL at period 7 (train) and MSFT at period 7 (test) would share the
         same market regime.
 
-        Current-snapshot rows are tagged with _time_idx=999_999 and excluded
-        from all folds — they're always in the final .fit() only.
-        All other historical periods from unique_periods[1] onward are covered
-        by exactly one test fold so that cross_val_predict never leaves gaps.
+        `embargo` (in period units) additionally drops the training periods
+        immediately before each test block. When forward label windows are
+        longer than the rebalance step they overlap across consecutive periods,
+        so a training period within `embargo` of the test block shares part of
+        its forward return with the test labels (overlapping-label leakage).
+        Set embargo = forward_days // rebalance_days to make folds leak-free;
+        the price-cache path uses non-overlapping windows and leaves it at 0.
+
+        Current-snapshot rows are tagged with 999_999 and excluded from all
+        folds — they're always in the final .fit() only.
         """
         # Exclude the current-snapshot sentinel (never a valid test period)
         unique_periods = sorted(p for p in np.unique(groups) if p != 999_999)
@@ -705,12 +722,12 @@ class NUMKTEnsemble:
             return
         n_splits = min(n_splits, n - 1)
         # Distribute all periods after the first into n_splits test chunks.
-        # This guarantees every historical period is in exactly one test fold,
-        # preventing the zero-fill artifact that distorts threshold calibration.
         test_chunks = [list(c) for c in np.array_split(unique_periods[1:], n_splits) if len(c)]
         for chunk in test_chunks:
             first_test = chunk[0]
-            train_pds  = [p for p in unique_periods if p < first_test]
+            # Embargo: training periods must end at least `embargo` periods
+            # before the test block starts so their label windows don't overlap.
+            train_pds  = [p for p in unique_periods if p < first_test - embargo]
             if not train_pds:
                 continue
             train_idx = np.where(np.isin(groups, train_pds))[0]
@@ -720,44 +737,68 @@ class NUMKTEnsemble:
 
 
     def _run_cv_and_fit(self, X: np.ndarray, y: np.ndarray,
-                        groups: np.ndarray | None = None):
+                        groups: np.ndarray | None = None,
+                        embargo: int = 0):
         """Run CV then full fit on both pipelines.
 
         When period groups are supplied, uses _period_group_cv so that all
         observations from a given time period stay on the same side of every
-        fold boundary (prevents cross-sectional leakage).  Falls back to
-        TimeSeriesSplit when no group information is available.
+        fold boundary (prevents cross-sectional leakage).  `embargo` (period
+        units) additionally separates train/test folds when label windows
+        overlap across periods.  Falls back to TimeSeriesSplit when no group
+        information is available.
         """
         n_splits = min(self.cv_folds, max(2, len(y) // 4))
 
         if groups is not None and len(np.unique(groups)) >= 3:
-            cv = list(NUMKTEnsemble._period_group_cv(groups, n_splits))
+            cv = list(NUMKTEnsemble._period_group_cv(groups, n_splits, embargo))
             if not cv:
                 cv = TimeSeriesSplit(n_splits=n_splits)
         else:
             cv = TimeSeriesSplit(n_splits=n_splits)
 
+        # Manual walk-forward OOF assembly. cross_val_predict cannot be used
+        # here: walk-forward / period-group CV intentionally never tests the
+        # first period or the current-snapshot sentinel rows, so the test folds
+        # do NOT form a partition of all rows — cross_val_predict requires a
+        # partition and raises "only works for partitions", which previously
+        # failed silently and forced an in-sample fallback (fake metrics).
+        # Instead we fit a clone per fold, scatter predictions into an OOF array
+        # initialised to NaN, and leave uncovered rows as NaN (genuinely OOS).
         self._oof_proba: np.ndarray | None = None
         try:
-            oof_rf = cross_val_predict(
-                self._rf_pipe, X, y, cv=cv,
-                method="predict_proba", n_jobs=-1,
-            )[:, 1]
-            oof_gb = cross_val_predict(
-                self._gb_pipe, X, y, cv=cv,
-                method="predict_proba", n_jobs=-1,
-            )[:, 1]
-            self._oof_proba  = self.rf_weight * oof_rf + self.gb_weight * oof_gb
-            oof_class        = (self._oof_proba >= 0.5).astype(int)
-            self.cv_accuracy = float(np.mean(oof_class == y))
-            logger.info(f"OOF CV accuracy (ensemble): {self.cv_accuracy:.3f}")
+            folds = cv if isinstance(cv, list) else list(cv.split(X, y))
 
-            # Calibrate signal thresholds from OOF probability distribution.
-            # Filter out the 0.0 sentinel values left by cross_val_predict for
-            # current-snapshot rows (999_999) which are never in any test fold.
-            # True RF+GB predictions with balanced class weights are never
-            # exactly 0.0 in practice, so this filter is safe.
-            covered_proba = self._oof_proba[self._oof_proba > 1e-9]
+            oof_rf = np.full(len(y), np.nan)
+            oof_gb = np.full(len(y), np.nan)
+            for tr_idx, te_idx in folds:
+                if len(tr_idx) == 0 or len(te_idx) == 0:
+                    continue
+                rf = clone(self._rf_pipe).fit(X[tr_idx], y[tr_idx])
+                gb = clone(self._gb_pipe).fit(X[tr_idx], y[tr_idx])
+                oof_rf[te_idx] = rf.predict_proba(X[te_idx])[:, 1]
+                oof_gb[te_idx] = gb.predict_proba(X[te_idx])[:, 1]
+
+            covered = np.isfinite(oof_rf) & np.isfinite(oof_gb)
+            self._oof_proba = np.full(len(y), np.nan)
+            self._oof_proba[covered] = (
+                self.rf_weight * oof_rf[covered] + self.gb_weight * oof_gb[covered]
+            )
+
+            if covered.sum() > 0:
+                oof_class = (self._oof_proba[covered] >= 0.5).astype(int)
+                self.cv_accuracy = float(np.mean(oof_class == y[covered]))
+                logger.info(
+                    f"OOF CV accuracy (ensemble): {self.cv_accuracy:.3f} "
+                    f"on {int(covered.sum())}/{len(y)} covered rows"
+                )
+            else:
+                self.cv_accuracy = 0.0
+                logger.warning("OOF CV produced no covered rows")
+
+            # Calibrate signal thresholds from the covered (genuinely OOS) OOF
+            # predictions only. Uncovered rows are NaN and excluded by `covered`.
+            covered_proba = self._oof_proba[covered]
             if len(covered_proba) >= 10:
                 self._signal_thresholds = {
                     "strong_buy": float(np.percentile(covered_proba, 80)),
@@ -774,6 +815,7 @@ class NUMKTEnsemble:
         except Exception as e:
             logger.warning(f"CV failed: {e}")
             self.cv_accuracy = 0.0
+            self._oof_proba  = None
 
         self._rf_pipe.fit(X, y)
         self._gb_pipe.fit(X, y)
