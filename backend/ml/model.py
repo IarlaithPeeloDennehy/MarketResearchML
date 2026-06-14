@@ -831,6 +831,20 @@ class NUMKTEnsemble:
         self._store_feature_importances(self._feature_names)
 
 
+    def fit_pipelines(self, X: np.ndarray, y: np.ndarray,
+                      feature_names: list[str] | None = None) -> "NUMKTEnsemble":
+        """Fit both pipelines directly, no CV. Used for the walk-forward
+        backtest where a fresh model is trained at every step purely to score
+        the next out-of-sample period — CV/IC/threshold calibration would be
+        wasted work there. Returns self so steps can chain fit→predict_proba."""
+        if feature_names is not None:
+            self._feature_names = feature_names
+        self._rf_pipe.fit(X, y)
+        self._gb_pipe.fit(X, y)
+        self.is_fitted = True
+        return self
+
+
     def _store_feature_importances(self, rank_cols: list[str]):
         rf_clf = self._rf_pipe.named_steps["clf"]
         gb_clf = self._gb_pipe.named_steps["clf"]
