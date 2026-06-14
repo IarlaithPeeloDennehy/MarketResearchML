@@ -179,6 +179,7 @@ class NUMKTEnsemble:
         forward_returns: list[float] | None = None,
         features_df:     pd.DataFrame | None = None,
         embargo:         int = 0,
+        include_snapshot: bool = True,
     ) -> "NUMKTEnsemble":
         """
         Train on real historical outcomes supplied by the backtest runner.
@@ -199,7 +200,15 @@ class NUMKTEnsemble:
         # Append current-snapshot rows (price features only) if available.
         # Both historical backtest rows and snapshot rows use only price rank
         # features, keeping the entire training pipeline free of look-ahead bias.
-        if features_df is not None and not features_df.empty:
+        #
+        # IMPORTANT: snapshot rows are labelled by the trailing-12M return, which
+        # OVERLAPS the most recent (holdout) windows of a walk-forward backtest —
+        # training on them leaks the holdout outcome and inflates holdout IC
+        # (badly at short horizons, where every holdout window sits inside the
+        # trailing year). The backtest runner therefore passes include_snapshot
+        # =False so the holdout metric stays honest. The price-cache fit() path,
+        # which has no holdout, still uses them to add current-period data.
+        if include_snapshot and features_df is not None and not features_df.empty:
             snap_rows, snap_labels, snap_returns = self._current_snapshot_rows(features_df)
             if snap_rows:
                 feature_rows    = feature_rows + snap_rows

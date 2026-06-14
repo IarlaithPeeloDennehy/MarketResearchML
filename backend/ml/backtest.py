@@ -294,6 +294,9 @@ def run_backtest(
             # is only a diagnostic. Raise this once enough periods accrue that
             # embargoed coverage spans multiple regimes.
             embargo         = 0,
+            # Exclude trailing-12M-labelled snapshot rows: they overlap the
+            # holdout windows and would leak the holdout outcome into training.
+            include_snapshot = False,
         )
         model.save(model_name)
 
