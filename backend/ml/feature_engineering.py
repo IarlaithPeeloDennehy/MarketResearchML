@@ -255,3 +255,45 @@ def build_features(raw_data: dict, profile: str = "quality") -> pd.DataFrame:
 
     logger.info(f"Built feature matrix: {df.shape[0]} stocks × {df.shape[1]} columns")
     return df
+
+
+def apply_reference_ranks(
+    df: pd.DataFrame,
+    panel: Optional[pd.DataFrame],
+) -> pd.DataFrame:
+    """Re-rank the price features against a broad market reference panel.
+
+    build_features ranks each feature within the current request only, so a
+    small watchlist is ranked against itself. This replaces the price `*_rank`
+    columns (the only features the model actually uses) with each stock's
+    percentile *within the reference distribution* — i.e. its rank vs the market,
+    independent of which other stocks the user picked. Two important properties:
+
+      • A stock scored alone gets the same rank as when scored inside a large
+        watchlist (the rank depends only on the stock + the fixed panel).
+      • The ascending-percentile convention matches the rank(pct=True) used at
+        training time, so the model sees ranks distributed as it was trained on.
+
+    No-ops (returns df unchanged) when the panel is missing/empty — callers keep
+    the within-universe ranking as a graceful fallback. Only PRICE_FEATURE_COLS
+    are touched; fundamental ranks (unused by the model) are left alone.
+    """
+    if panel is None or len(panel) == 0 or df.empty:
+        return df
+
+    for col in PRICE_FEATURE_COLS:
+        if col not in df.columns or col not in panel.columns:
+            continue
+        ref = pd.to_numeric(panel[col], errors="coerce").to_numpy()
+        ref = ref[np.isfinite(ref)]
+        if len(ref) < 20:
+            continue
+        ref.sort()
+        vals = pd.to_numeric(df[col], errors="coerce").to_numpy()
+        # Ascending percentile rank of each value within the reference set:
+        # fraction of reference observations <= value (matches rank(pct=True)).
+        ranks = np.searchsorted(ref, vals, side="right") / len(ref)
+        ranks = np.where(np.isfinite(vals), ranks, 0.5)   # neutral when missing
+        df[col + "_rank"] = ranks
+
+    return df

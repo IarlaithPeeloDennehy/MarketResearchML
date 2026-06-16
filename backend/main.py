@@ -59,7 +59,8 @@ _FRONTEND_HTML = Path(__file__).parent.parent / "index.html"
 from ml.data_fetcher import (fetch_stock_data, fetch_multiple_stocks,
                               get_cache_status, clear_cache as clear_data_cache,
                               _get_finnhub_client, _is_us_ticker)
-from ml.feature_engineering import build_features
+from ml.feature_engineering import build_features, apply_reference_ranks
+from ml.reference_panel import load_reference_panel
 from ml.model import NUMKTEnsemble
 from ml.backtest import run_backtest
 from ml.scoring import score_universe
@@ -598,6 +599,15 @@ async def analyse(request: Request, req: AnalyseRequest, current_user: User = De
         features_df = build_features(raw_data, profile=req.profile)
         if features_df.empty:
             raise HTTPException(422, "Not enough data to build features.")
+
+        # Make scores market-relative: re-rank the price features against the
+        # broad cached anchor panel instead of within this request only, so a
+        # small watchlist isn't ranked against itself. No-ops gracefully (keeps
+        # within-universe ranking) when the panel can't be built (cold start).
+        try:
+            features_df = apply_reference_ranks(features_df, load_reference_panel())
+        except Exception as exc:
+            logger.warning(f"Reference-rank de-biasing skipped (non-fatal): {exc}")
 
         # Use the model trained on real returns if available
         # Otherwise fall back to per-profile model with synthetic labels
