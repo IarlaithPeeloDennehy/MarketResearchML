@@ -234,6 +234,8 @@ def run_backtest(
                    for c in PRICE_FEATURE_COLS}
             rec["ticker"]  = ticker
             rec["fwd_ret"] = fwd_rets[ticker]
+            # Raw point-in-time volatility (window start) for risk-based sizing.
+            rec["vol"]     = float(snap_df.loc[ticker].get("vol_60d", 0.20) or 0.20)
             frame_rows.append(rec)
 
             # Accumulate rows for the final production model (all periods).
@@ -277,6 +279,7 @@ def run_backtest(
                 "ticker":     ft["ticker"].values,
                 "model_score": scores,
                 "fwd_ret":    ft["fwd_ret"].values,
+                "vol":        ft["vol"].values if "vol" in ft.columns else 0.20,
             })
 
     # ── Phase 3: metrics from walk-forward scores ──────────────────────────
@@ -285,6 +288,21 @@ def run_backtest(
     holdout_icir    = None
     period_examples = []
     prev_top_set    = set()
+
+    # ── Behavioural (co-equal) portfolios ──────────────────────────────────
+    # Same top-quintile selection as the equal-weight book, but:
+    #   sized      — conviction × inverse-volatility weights (size correctly:
+    #                more into high-conviction low-vol names, less into churny
+    #                high-vol ones), capped per name.
+    #   hysteresis — hold a name until its score falls below the period median,
+    #                instead of dropping it the instant it leaves the top
+    #                quintile (reduces overtrading / turnover).
+    sized_returns:    list[float] = []   # net of cost
+    sized_turnovers:  list[float] = []
+    prev_weights:     dict[str, float] = {}
+    hyst_returns:     list[float] = []   # net of cost
+    hyst_turnovers:   list[float] = []
+    hyst_hold:        set[str] = set()
 
     wf_periods = sorted(wf_scored)
     pooled_scores, pooled_rets = [], []
@@ -321,6 +339,43 @@ def run_backtest(
         if prev_top_set:
             turnovers.append(1 - len(curr_set & prev_top_set) / max(len(curr_set), 1))
         prev_top_set = curr_set
+
+        # ── Sized book: conviction × inverse-vol over the top quintile ─────
+        tg = top_grp.copy()
+        conv = (tg["model_score"] - 0.5).clip(lower=0.0)
+        ivol = 1.0 / tg["vol"].clip(lower=0.05)
+        w    = (conv * ivol).to_numpy(dtype=float)
+        if w.sum() <= 0:                     # no conviction → equal weight
+            w = np.ones(len(tg))
+        w = w / w.sum()
+        w = np.minimum(w, 0.25)              # per-name cap
+        w = w / w.sum()
+        weights = dict(zip(tg["ticker"], w))
+        sized_gross = float((w * tg["fwd_ret"].to_numpy(dtype=float)).sum())
+        # Cost on traded notional vs previous weights (round-trip cost_bps).
+        names = set(weights) | set(prev_weights)
+        traded = sum(abs(weights.get(n, 0.0) - prev_weights.get(n, 0.0)) for n in names)
+        sized_returns.append(sized_gross - traded * cost_bps / 10_000)
+        sized_turnovers.append(traded / 2.0)
+        prev_weights = weights
+
+        # ── Hysteresis book: hold above the period median, enter on top ────
+        med_all   = grp["model_score"].median()
+        score_map = dict(zip(grp["ticker"], grp["model_score"]))
+        ret_map   = dict(zip(grp["ticker"], grp["fwd_ret"]))
+        kept      = {n for n in hyst_hold if score_map.get(n, 0.0) >= med_all}
+        new_hold  = kept | curr_set
+        new_hold  = {n for n in new_hold if n in ret_map}
+        if new_hold:
+            hg = float(np.mean([ret_map[n] for n in new_hold]))
+            h_new = new_hold - hyst_hold if hyst_hold else new_hold
+            h_turn = len(h_new) / max(len(new_hold), 1)
+            hyst_returns.append(hg - h_turn * cost_bps / 10_000)
+            if hyst_hold:
+                hyst_turnovers.append(
+                    1 - len(new_hold & hyst_hold) / max(len(new_hold), 1)
+                )
+        hyst_hold = new_hold
 
     if period_ics:
         holdout_ic_mean = round(float(np.mean(period_ics)), 4)
@@ -469,10 +524,27 @@ def run_backtest(
 
     avg_turn = float(np.mean(turnovers)) if turnovers else 0.5
 
+    # ── Behavioural portfolios (co-equal ruler) ────────────────────────────
+    # Risk-adjusted outcome of the sized + hysteresis books vs the naive
+    # equal-weight top quintile. These measure the "behavioural edge" (size
+    # correctly, trade less) the equal-weight IC book can't.
+    behavioural = {
+        "equal_weight": _port_stats(pa, ppy, rf, avg_turn),
+        "sized":        _port_stats(np.array(sized_returns), ppy, rf,
+                                    float(np.mean(sized_turnovers)) if sized_turnovers else None),
+        "hysteresis":   _port_stats(np.array(hyst_returns), ppy, rf,
+                                    float(np.mean(hyst_turnovers)) if hyst_turnovers else None),
+        "note": ("Sized = conviction × inverse-vol weighting; hysteresis = hold "
+                 "until score < median (fewer trades). Net of "
+                 f"{cost_bps}bps round-trip costs."),
+    }
+
     logger.info(
         f"BACKTEST COMPLETE | periods={len(pa)} | IC={ic_mean:.4f} | "
-        f"Sharpe={sharpe:.3f} | Hit={hit_rate:.1%} | "
-        f"Alpha gross={ann_alpha:.2%}, net={ann_alpha_net:.2%} ({cost_bps}bps)"
+        f"Sharpe eq={sharpe:.2f}/sized={behavioural['sized'].get('sharpe')}/"
+        f"hyst={behavioural['hysteresis'].get('sharpe')} | "
+        f"turn eq={avg_turn:.0%}/hyst={behavioural['hysteresis'].get('avg_turnover_pct')} | "
+        f"Alpha net={ann_alpha_net:.2%} ({cost_bps}bps)"
     )
 
     return {
@@ -495,7 +567,33 @@ def run_backtest(
         "avg_monthly_turnover": round(avg_turn*100, 1),
         "effective_lookback_years": effective_lookback_yrs,
         "interpretation":       _interpret(hit_rate, ic_mean, sharpe, max_dd, ann_alpha_net),
+        "behavioural":          behavioural,
         "training":             training_info,
+    }
+
+
+def _port_stats(returns: np.ndarray, ppy: float, rf: float,
+                avg_turnover: float | None) -> dict:
+    """Annualised return / Sharpe / max-drawdown / Calmar / turnover for a
+    per-period net-return series. Used to compare the behavioural books."""
+    if returns is None or len(returns) == 0:
+        return {"n_periods": 0, "ann_return_pct": None, "sharpe": None,
+                "max_drawdown_pct": None, "calmar": None, "avg_turnover_pct": None}
+    r      = np.asarray(returns, dtype=float)
+    ann    = float(np.prod(1 + r) ** (ppy / len(r)) - 1)
+    exc    = r - rf
+    sharpe = float(np.mean(exc) / (np.std(exc) + 1e-9) * np.sqrt(ppy))
+    cum    = np.cumprod(1 + r)
+    rm     = np.maximum.accumulate(cum)
+    max_dd = float(np.min((cum - rm) / (rm + 1e-9)))
+    calmar = round(ann / abs(max_dd), 3) if max_dd < -1e-6 else None
+    return {
+        "n_periods":        len(r),
+        "ann_return_pct":   round(ann * 100, 2),
+        "sharpe":           round(sharpe, 3),
+        "max_drawdown_pct": round(max_dd * 100, 2),
+        "calmar":           calmar,
+        "avg_turnover_pct": round(avg_turnover * 100, 1) if avg_turnover is not None else None,
     }
 
 

@@ -135,6 +135,39 @@ class TestEffectiveLookbackYears:
         assert ely == expected, f"Expected {expected}, got {ely}"
 
 
+class TestBehaviouralMetrics:
+    """Component 4: run_backtest reports sized + hysteresis books alongside
+    the equal-weight book and walk-forward IC."""
+
+    def _run(self):
+        tickers     = [f"T{i}" for i in range(10)]
+        raw_data    = _make_raw_data(tickers, n=900, seed=7)
+        features_df = _make_features_df(tickers)
+        return run_backtest(
+            features_df=features_df, raw_data=raw_data,
+            train_model=True, forward_months=3, rebalance_months=3,
+            model_name="behav_unit_test",
+        )
+
+    def test_behavioural_block_present_and_shaped(self):
+        result = self._run()
+        assert "behavioural" in result
+        beh = result["behavioural"]
+        for book in ("equal_weight", "sized", "hysteresis"):
+            assert book in beh, f"missing book {book}"
+            s = beh[book]
+            for key in ("n_periods", "ann_return_pct", "sharpe",
+                        "max_drawdown_pct", "calmar", "avg_turnover_pct"):
+                assert key in s, f"{book} missing {key}"
+        # IC (co-equal ruler) still reported and additive — unchanged shape.
+        assert "ic_mean" in result
+
+    def test_behavioural_is_json_serialisable(self):
+        import json
+        result = self._run()
+        json.dumps(result["behavioural"])  # must not raise
+
+
 class TestTickerValidation:
     """Tests for the _TICKER_RE lookahead fix (Item 14)."""
 
