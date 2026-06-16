@@ -78,6 +78,74 @@ def _get_signal(score: float, thresholds: dict | None = None) -> str:
     return "SELL"
 
 
+def _band_edges(thresholds: dict | None) -> list[float]:
+    return sorted([
+        thresholds.get("strong_buy", 0.68) if thresholds else 0.68,
+        thresholds.get("buy",        0.54) if thresholds else 0.54,
+        thresholds.get("hold",       0.38) if thresholds else 0.38,
+    ])
+
+
+def _signal_stability(composite: float, thresholds: dict | None) -> tuple[str, str | None]:
+    """How firmly the score sits in its band. A score sitting right on a
+    threshold can flip on day-to-day noise — flagging that is anti-overtrading
+    discipline: don't act on a borderline signal."""
+    edges = _band_edges(thresholds)
+    dist  = min(abs(composite - e) for e in edges)
+    if dist < 0.03:
+        return "Borderline", (
+            "Sitting near a signal threshold — small moves may flip this. "
+            "Avoid acting on short-term noise."
+        )
+    return "Firm", None
+
+
+def _action_note(signal: str) -> str:
+    """Plain, discipline-oriented guidance (reduce churn / panic-selling)."""
+    return {
+        "STRONG BUY": "Strong conviction buy candidate.",
+        "BUY":        "Buy candidate.",
+        "HOLD":       "Hold — no action needed. Not a fresh buy, but no reason to sell on this alone.",
+        "SELL":       "Model does not favour this. Review the bear case before holding.",
+    }.get(signal, "")
+
+
+# Relative position-sizing tiers (NOT % allocations, NOT financial advice).
+# Drives "size correctly": conviction sets the base tier, then high volatility /
+# beta downsizes it so users don't oversize their churny, riskiest names.
+_TIER_ORDER = ["Small", "Medium", "Large"]
+
+
+def _size_tier(signal: str, composite: float, vol_60d, beta) -> tuple[str, str | None]:
+    if signal == "SELL":
+        return "Avoid", None
+    if signal == "HOLD":
+        return "—", None
+
+    tier  = "Large" if signal == "STRONG BUY" else "Medium"
+    notes = []
+    try:
+        v = float(vol_60d)
+    except (TypeError, ValueError):
+        v = None
+    try:
+        b = float(beta)
+    except (TypeError, ValueError):
+        b = None
+
+    high_vol  = v is not None and np.isfinite(v) and v > 0.45
+    high_beta = b is not None and np.isfinite(b) and b > 1.5
+    if high_vol or high_beta:
+        tier = _TIER_ORDER[max(0, _TIER_ORDER.index(tier) - 1)]
+        if high_vol:
+            notes.append(f"high volatility ({v*100:.0f}% annualised)")
+        if high_beta:
+            notes.append(f"high beta ({b:.1f})")
+
+    note = ("Size smaller — " + ", ".join(notes)) if notes else None
+    return tier, note
+
+
 def _bull_points(row: pd.Series, inst_pct: float | None, insider_pct: float | None) -> list[str]:
     """Plain-English reasons the stock could outperform."""
     pe       = row.get("pe_ratio")
@@ -246,6 +314,12 @@ def score_universe(
         factor_profile = _factor_profile(row)
         reasons        = _build_reasons(row, signal, inst_pct, insider_pct)
 
+        # Behavioural overlay: relative sizing tier + signal-stability /
+        # hold-discipline guidance (reduce oversizing, churn, panic-selling).
+        size_tier, size_note      = _size_tier(signal, composite, row.get("vol_60d"), beta)
+        stability, stability_note = _signal_stability(composite, thresholds)
+        action_note               = _action_note(signal)
+
         result = {
             "ticker":           ticker,
             "name":             row.get("name", ticker),
@@ -258,6 +332,12 @@ def score_universe(
             "is_buy":              signal in ("STRONG BUY", "BUY"),
             "composite_score":     round(composite * 100, 1),
             "fundamental_score":   round(fund_score * 100, 1),
+            # Behavioural overlay (guidance, not financial advice)
+            "size_tier":           size_tier,        # Large / Medium / Small / Avoid / —
+            "size_note":           size_note,
+            "signal_stability":    stability,        # Firm | Borderline
+            "stability_note":      stability_note,
+            "action_note":         action_note,
             "inst_ownership_pct":  round(inst_pct * 100, 1) if inst_pct is not None else None,
             "insider_ownership_pct": round(insider_pct * 100, 1) if insider_pct is not None else None,
             "beta_note":           "vs S&P 500 — may not reflect local market beta" if market in ("UK", "IE") else None,
