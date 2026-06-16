@@ -116,5 +116,5 @@ def test_all_rank_values_in_unit_interval(tmp_path):
 
 def test_anchor_universe_size_and_uniqueness():
     from ml.model import _ANCHOR_TICKERS
-    assert len(_ANCHOR_TICKERS) >= 40, "Anchor universe too small for stable pre-training"
+    assert len(_ANCHOR_TICKERS) >= 40, "Anchor universe too small for stable head training"
     assert len(set(_ANCHOR_TICKERS)) == len(_ANCHOR_TICKERS), "Duplicate tickers in anchor list"

@@ -53,8 +53,25 @@ from pathlib import Path
 from datetime import datetime
 
 from .feature_engineering import FEATURE_COLS, PRICE_FEATURE_COLS, safe_ticker_filename
+from .embedding_features import (
+    point_in_time_embedding,
+    encoder_enabled,
+    standardize_emb_columns,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _fill_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Fill NaNs: price/fundamental rank cols → 0.5 (neutral rank),
+    embedding cols → 0.0 (neutral on the standardized embedding scale)."""
+    emb_cols = [c for c in df.columns if c.startswith("emb_")]
+    if emb_cols:
+        df[emb_cols] = df[emb_cols].fillna(0.0)
+    other = [c for c in df.columns if c not in emb_cols]
+    if other:
+        df[other] = df[other].fillna(0.5)
+    return df
 
 import os as _os
 _cache_root = _os.environ.get("CACHE_DIR")
@@ -250,7 +267,7 @@ class NUMKTEnsemble:
                     f"Appended {len(snap_rows)} current-snapshot rows (price features)"
                 )
 
-        df = pd.DataFrame(feature_rows).fillna(0.5)
+        df = _fill_features(pd.DataFrame(feature_rows))
         y  = np.array(return_labels)
 
         # Extract period groups from the rows (not the fillna'd frame, which
@@ -399,7 +416,7 @@ class NUMKTEnsemble:
         for row in feature_rows:
             row.pop("_time_idx", None)
 
-        df_train = pd.DataFrame(feature_rows).fillna(0.5)
+        df_train = _fill_features(pd.DataFrame(feature_rows))
         y        = np.array(return_labels)
         fwd_arr  = np.array(forward_returns_list)
 
@@ -499,6 +516,8 @@ class NUMKTEnsemble:
             # Build historical feature snapshots for all tickers at t_start.
             # Use only price data available up to (and including) t_start.
             raw_snaps: dict[str, dict] = {}
+            emb_by_ticker: dict[str, dict] = {}
+            emb_on = encoder_enabled()
             for ticker, prices in price_series.items():
                 if len(prices) <= t_end:
                     continue
@@ -534,6 +553,12 @@ class NUMKTEnsemble:
                 snap["price_vs_52w_high"] = float(p.iloc[-1] / hi - 1) if hi > 0 else np.nan
 
                 raw_snaps[ticker] = snap
+                if emb_on:
+                    # Point-in-time embedding: only prices up to t_start are used,
+                    # so future bars cannot leak into this window's embedding.
+                    emb_by_ticker[ticker] = point_in_time_embedding(
+                        prices, end_idx=t_start, ticker=ticker
+                    )
 
             if len(raw_snaps) < 3:
                 continue
@@ -547,6 +572,13 @@ class NUMKTEnsemble:
                 elif col + "_rank" not in snap_df.columns:
                     snap_df[col + "_rank"] = 0.5
             snap_df = snap_df.fillna(0.5)
+
+            # Attach standardized encoder embeddings (cross-sectional per window).
+            # Added after fillna(0.5) so emb cols use a 0.0 neutral, not 0.5.
+            if emb_on and emb_by_ticker:
+                emb_df = standardize_emb_columns(pd.DataFrame(emb_by_ticker).T)
+                for c in emb_df.columns:
+                    snap_df[c] = emb_df[c].reindex(snap_df.index).fillna(0.0)
 
             # Actual forward returns from t_start to t_end
             window_returns: dict[str, float] = {}
@@ -612,6 +644,8 @@ class NUMKTEnsemble:
 
         # Load the past-12M return for each ticker from cached price files.
         # Using 253 bars (252 + current day) to match the mom_12m definition.
+        emb_on = encoder_enabled()
+        emb_by_ticker: dict[str, dict] = {}
         fwd_returns: dict[str, float] = {}
         for ticker in tickers:
             path = PRICE_DIR / f"{safe_ticker_filename(ticker)}.parquet"
@@ -626,6 +660,10 @@ class NUMKTEnsemble:
                 p1 = float(prices.iloc[-1])
                 if p0 > 0:
                     fwd_returns[ticker] = round(p1 / p0 - 1, 6)
+                if emb_on:
+                    emb_by_ticker[ticker] = point_in_time_embedding(
+                        prices, end_idx=len(prices) - 1, ticker=ticker
+                    )
             except Exception as e:
                 logger.warning(f"Could not load price cache for {ticker}: {e}")
 
@@ -652,11 +690,17 @@ class NUMKTEnsemble:
                 except (TypeError, ValueError):
                     frow[col] = 0.5
 
+            if emb_on:
+                frow.update(emb_by_ticker.get(ticker, {}))
             # _time_idx = large value so these sort after all historical windows
             frow["_time_idx"] = 999_999
             rows.append(frow)
             labels.append(1 if ret > median_ret else 0)
             returns.append(ret)
+
+        # Standardize embedding columns cross-sectionally across the current universe.
+        if emb_on and rows:
+            rows = standardize_emb_columns(pd.DataFrame(rows)).to_dict("records")
 
         return rows, labels, returns
 
@@ -723,7 +767,12 @@ class NUMKTEnsemble:
     # ── Shared helpers ─────────────────────────────────────────────────────
 
     def _select_rank_cols(self, df: pd.DataFrame) -> list[str]:
-        """Return the ranked feature columns present in df."""
+        """Return the ranked feature columns present in df.
+
+        Includes any encoder embedding columns (emb_*) so the head trains on
+        [price ranks (+ fundamentals for snapshots) + embeddings]. When no
+        encoder is loaded there are no emb_* columns and this is a no-op.
+        """
         feat_cols = [c for c in FEATURE_COLS
                      if c + "_rank" in df.columns or c in df.columns]
         rank_cols = []
@@ -732,6 +781,10 @@ class NUMKTEnsemble:
                 rank_cols.append(c + "_rank")
             elif c in df.columns:
                 rank_cols.append(c)
+        rank_cols.extend(sorted(
+            (c for c in df.columns if c.startswith("emb_")),
+            key=lambda c: int(c.split("_")[1]) if c.split("_")[1].isdigit() else 0,
+        ))
         return rank_cols
 
 

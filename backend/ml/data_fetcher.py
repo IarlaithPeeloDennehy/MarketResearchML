@@ -206,12 +206,19 @@ def _fetch_one_finnhub(ticker: str, client, start_dt: datetime, end_dt: datetime
         except Exception as e:
             logger.warning(f"{ticker}: Finnhub metrics failed: {e}")
 
-        # Earnings surprises (last 4 quarters) → PEAD signal
+        # Earnings surprises → PEAD signal (snapshot avg) + full history for the
+        # encoder's earn_surprise_pulse channel (Group B).
         earnings_surprise_avg = None
+        earnings_hist = []
         try:
-            earnings = client.company_earnings(ticker, limit=4) or []
+            earnings = client.company_earnings(ticker, limit=24) or []
+            earnings_hist = [
+                {"period": e.get("period"), "surprisePercent": e.get("surprisePercent")}
+                for e in earnings
+                if e.get("period") and e.get("surprisePercent") is not None
+            ]
             surprises = [
-                e["surprisePercent"] for e in earnings
+                e["surprisePercent"] for e in earnings[:4]
                 if e.get("surprisePercent") is not None
             ]
             if surprises:
@@ -221,10 +228,19 @@ def _fetch_one_finnhub(ticker: str, client, start_dt: datetime, end_dt: datetime
         except Exception as e:
             logger.warning(f"{ticker}: Finnhub earnings failed: {e}")
 
-        # Analyst consensus (most recent month)
+        # Analyst consensus (most recent month) + full monthly history for the
+        # encoder's analyst_net_buy_ts channel (Group B).
         analyst_buy = analyst_hold = analyst_sell = None
+        analyst_hist = []
         try:
             rec = client.recommendation_trends(ticker) or []
+            analyst_hist = [
+                {"period": r.get("period"),
+                 "strongBuy": r.get("strongBuy"), "buy": r.get("buy"),
+                 "hold": r.get("hold"),
+                 "sell": r.get("sell"), "strongSell": r.get("strongSell")}
+                for r in rec if r.get("period")
+            ]
             if rec:
                 r = rec[0]
                 analyst_buy  = (r.get("buy") or 0) + (r.get("strongBuy") or 0)
@@ -232,6 +248,13 @@ def _fetch_one_finnhub(ticker: str, client, start_dt: datetime, end_dt: datetime
                 analyst_sell = (r.get("sell") or 0) + (r.get("strongSell") or 0)
         except Exception as e:
             logger.warning(f"{ticker}: Finnhub recommendations failed: {e}")
+
+        # Persist the discarded series for Group B encoder channels (point-in-time).
+        try:
+            from . import series_cache
+            series_cache.save(ticker, earnings_hist, analyst_hist)
+        except Exception as e:
+            logger.debug(f"{ticker}: series cache save skipped: {e}")
 
         # Next earnings date (within 90 days)
         next_earnings_date = None
