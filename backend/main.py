@@ -71,6 +71,7 @@ from auth.models import User, UserSession, ActivityEvent
 from user.router import router as user_router
 from db.session import get_db
 from db.base import engine
+from signal_history import load_prior_signals, record_signals
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -719,10 +720,32 @@ async def analyse(request: Request, req: AnalyseRequest, current_user: User = De
                 model = _model_cache[cache_key]
                 logger.info(f"Using cached synthetic model: {cache_key}")
 
+        # Stateful hold discipline: read this user's most recent prior signal
+        # per ticker so score_universe can soften a fresh SELL on a name they
+        # were recently shown as a BUY. Fully optional — no DB / query error can
+        # affect the response (works on ML-only deployments with no DATABASE_URL).
+        _hist_db      = None
+        prior_signals = {}
+        try:
+            _hist_db = next(get_db())
+            prior_signals = load_prior_signals(_hist_db, current_user.id, tickers)
+        except Exception:
+            _hist_db = None
+
         results = score_universe(
             model=model, features_df=features_df, raw_data=raw_data,
-            profile=req.profile, risk=req.risk,
+            profile=req.profile, risk=req.risk, prior_signals=prior_signals,
         )
+
+        # Persist this analyse's signals for next time, then release the session.
+        if _hist_db is not None:
+            try:
+                record_signals(_hist_db, current_user.id, results)
+            finally:
+                try:
+                    _hist_db.close()
+                except Exception:
+                    pass
 
         # Cache for backtest
         _data_cache["latest"]           = raw_data

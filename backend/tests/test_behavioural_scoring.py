@@ -7,7 +7,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ml.scoring import _size_tier, _signal_stability, _action_note, _TIER_ORDER
+from ml.scoring import (
+    _size_tier,
+    _signal_stability,
+    _action_note,
+    _apply_hysteresis,
+    _TIER_ORDER,
+)
 
 
 class TestSizeTier:
@@ -54,3 +60,34 @@ class TestActionNote:
         note = _action_note("HOLD")
         assert "no action" in note.lower()
         assert "sell" in note.lower()  # explicitly discourages selling on this alone
+
+
+class TestHysteresis:
+    """Stateful hold discipline. Defaults: hold=0.38, grace floor=0.33."""
+    BUY = {"signal": "BUY", "date": "12 Jun 2026"}
+
+    def test_no_prior_is_passthrough(self):
+        assert _apply_hysteresis("SELL", 0.36, None, None) == ("SELL", None, False)
+
+    def test_fresh_sell_on_recent_buy_softens_to_hold(self):
+        sig, note, applied = _apply_hysteresis("SELL", 0.36, self.BUY, None)
+        assert sig == "HOLD" and applied is True
+        assert note and "holding" in note.lower()
+        assert "12 Jun 2026" in note
+
+    def test_deep_sell_on_recent_buy_stays_sell(self):
+        sig, note, applied = _apply_hysteresis("SELL", 0.20, self.BUY, None)
+        assert sig == "SELL" and applied is False
+        assert note and "weakened" in note.lower()
+
+    def test_hold_on_recent_buy_is_stay_invested(self):
+        sig, note, applied = _apply_hysteresis("HOLD", 0.45, self.BUY, None)
+        assert sig == "HOLD" and applied is False
+        assert note and "intact" in note.lower()
+
+    def test_prior_non_buy_never_grants_grace(self):
+        assert _apply_hysteresis("SELL", 0.36, {"signal": "HOLD"}, None) == ("SELL", None, False)
+
+    def test_never_hardens_or_upgrades(self):
+        # A still-strong signal is left untouched even with a prior buy.
+        assert _apply_hysteresis("STRONG BUY", 0.80, self.BUY, None) == ("STRONG BUY", None, False)
