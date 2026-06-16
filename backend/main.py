@@ -59,7 +59,8 @@ _FRONTEND_HTML = Path(__file__).parent.parent / "index.html"
 from ml.data_fetcher import (fetch_stock_data, fetch_multiple_stocks,
                               get_cache_status, clear_cache as clear_data_cache,
                               _get_finnhub_client, _is_us_ticker)
-from ml.feature_engineering import build_features
+from ml.feature_engineering import build_features, apply_reference_ranks
+from ml.reference_panel import load_reference_panel
 from ml.model import NUMKTEnsemble
 from ml.backtest import run_backtest
 from ml.scoring import score_universe
@@ -265,10 +266,11 @@ async def _startup_train_head() -> None:
         from ml.data_fetcher import _price_cache_path, _cache_is_fresh
 
         # Only train on tickers already in the price cache — never fetch fresh
-        # data at startup. Fetching all 58 anchor tickers would fire ~580 Finnhub
-        # API calls in the first minute, exhausting the free-tier rate limit (60/min)
-        # before any user request can succeed. The _background_retrain triggered by
-        # user requests grows the training universe over time instead.
+        # data at startup. Bulk-fetching the full anchor universe (~180 names)
+        # would fire hundreds of Finnhub calls in the first minute, exhausting
+        # the free-tier rate limit (60/min) before any user request can succeed.
+        # The _background_retrain triggered by user requests grows the training
+        # universe over time instead.
         cached_tickers = [t for t in _ANCHOR_TICKERS if _cache_is_fresh(_price_cache_path(t))]
         if len(cached_tickers) < 3:
             logger.info(
@@ -689,6 +691,15 @@ async def analyse(request: Request, req: AnalyseRequest, current_user: User = De
         features_df = build_features(raw_data, profile=req.profile)
         if features_df.empty:
             raise HTTPException(422, "Not enough data to build features.")
+
+        # Make scores market-relative: re-rank the price features against the
+        # broad cached anchor panel instead of within this request only, so a
+        # small watchlist isn't ranked against itself. No-ops gracefully (keeps
+        # within-universe ranking) when the panel can't be built (cold start).
+        try:
+            features_df = apply_reference_ranks(features_df, load_reference_panel())
+        except Exception as exc:
+            logger.warning(f"Reference-rank de-biasing skipped (non-fatal): {exc}")
 
         # Use the model trained on real returns if available
         # Otherwise fall back to per-profile model with synthetic labels

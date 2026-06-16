@@ -116,28 +116,32 @@ def run_backtest(
     logger.info(f"Backtest: {len(tickers)} tickers, {n_periods} periods, "
                 f"{forward_months}M forward window, {effective_lookback_yrs}y effective")
 
-    # ── Train / holdout split ──────────────────────────────────────────────
-    # Hold out the last ~20% of periods so the model can be evaluated on
-    # data it never saw during training. Requires at least 4 periods to be
-    # worth splitting; below that threshold all data goes to training and
-    # holdout_ic is skipped.
-    if n_periods >= 4:
-        n_holdout    = max(1, n_periods // 5)
-        train_cutoff = n_periods - n_holdout
-    else:
-        n_holdout    = 0
-        train_cutoff = n_periods
+    # ── Embargoed expanding-window walk-forward ────────────────────────────
+    # The evaluation ruler. For every period t we train a FRESH model on all
+    # periods ending at least `embargo_periods` before t, then score period t
+    # — which the model has never seen. Every scored period is therefore a
+    # genuine out-of-sample observation, so the whole walk-forward IS the
+    # holdout (no separate 20% tail needed). This uses ~all periods for
+    # evaluation instead of 4, roughly halving the standard error on mean IC.
+    #
+    # EMBARGO: forward windows are `forward_days` long but periods are only
+    # `rebalance_days` apart, so period t's label window overlaps the periods
+    # within forward_days/rebalance_days of it. Dropping that many periods
+    # before t prevents overlapping-label leakage (López de Prado).
+    embargo_periods   = forward_days // rebalance_days   # e.g. 252//63 = 4
+    min_train_periods = 3
+    rank_cols         = [f"{c}_rank" for c in PRICE_FEATURE_COLS]
 
     logger.info(
-        f"Train/holdout split: {train_cutoff} training periods, "
-        f"{n_holdout} holdout periods"
+        f"Walk-forward eval: embargo={embargo_periods} periods, "
+        f"min_train={min_train_periods}, forward={forward_months}M, "
+        f"rebalance={rebalance_months}M"
     )
 
     # ── Accumulators ──────────────────────────────────────────────────────
-    # bench_ret_by_period is filled during the loop.
-    # All other metric accumulators are filled after training using ML model
-    # scores — not the hand-coded factor formula.
     bench_ret_by_period: dict[int, float] = {}
+    period_frames:       dict[int, pd.DataFrame] = {}   # p -> [ticker, *rank, fwd_ret]
+
     period_ics        = []
     period_hit_rates  = []
     portfolio_returns       = []   # net of transaction costs
@@ -145,16 +149,14 @@ def run_backtest(
     benchmark_returns       = []
     turnovers               = []
 
-    # Training periods (period < train_cutoff)
+    # Rows for the FINAL production model (all periods, every label its own
+    # period median). Kept separate from the walk-forward, which trains its
+    # own per-step throwaway models.
     all_feature_rows    = []
     all_return_labels   = []
     all_forward_returns = []
 
-    # Holdout periods (period >= train_cutoff) — never seen by the model
-    holdout_feature_rows    = []
-    holdout_return_labels   = []
-    holdout_forward_returns = []
-
+    # ── Phase 1: build per-period feature/return frames ────────────────────
     for period in range(n_periods):
         start_idx = period * rebalance_days
         end_idx   = start_idx + forward_days
@@ -237,52 +239,241 @@ def run_backtest(
                 if p0 > 0:
                     fwd_rets[ticker] = (p1/p0)-1
 
-        if len(fwd_rets) < 2:
-            continue
-
         common = [t for t in tickers_here if t in fwd_rets]
         if len(common) < 2:
             continue
 
-        rv = [fwd_rets[t] for t in common]
+        rv         = [fwd_rets[t] for t in common]
+        median_ret = float(np.median(rv))
         bench_ret_by_period[period] = float(np.mean(rv))
 
-        # ── Collect training / holdout data ────────────────────────────────
-        # Price-derived rank features only. _period_idx is stored on every row
-        # so that after training we can map OOF / model predictions back to
-        # their period for per-period metric computation.
-        if train_model:
-            median_ret = np.median(rv)
-            for ticker in common:
-                ret = fwd_rets[ticker]
-                row_dict = {
-                    f"{col}_rank": float(snap_df.loc[ticker].get(f"{col}_rank", 0.5))
-                    for col in PRICE_FEATURE_COLS
-                    if f"{col}_rank" in snap_df.columns
-                }
-                for c in snap_df.columns:
-                    if c.startswith("emb_"):
-                        row_dict[c] = float(snap_df.loc[ticker, c])
-                row_dict["ticker"]      = ticker
-                row_dict["_period_idx"] = period
-                label = 1 if ret >= median_ret else 0
-                if period < train_cutoff:
-                    all_feature_rows.append(row_dict)
-                    all_return_labels.append(label)
-                    all_forward_returns.append(ret)
-                else:
-                    holdout_feature_rows.append(row_dict)
-                    holdout_return_labels.append(label)
-                    holdout_forward_returns.append(ret)
+        frame_rows = []
+        emb_here = [c for c in snap_df.columns if c.startswith("emb_")]
+        for ticker in common:
+            rec = {f"{c}_rank": float(snap_df.loc[ticker].get(f"{c}_rank", 0.5))
+                   for c in PRICE_FEATURE_COLS}
+            # Encoder embeddings (empty unless an encoder is loaded) — direct
+            # model features, not _rank columns. See ml/embedding_features.py.
+            for c in emb_here:
+                rec[c] = float(snap_df.loc[ticker, c])
+            rec["ticker"]  = ticker
+            rec["fwd_ret"] = fwd_rets[ticker]
+            # Raw point-in-time volatility (window start) for risk-based sizing.
+            rec["vol"]     = float(snap_df.loc[ticker].get("vol_60d", 0.20) or 0.20)
+            frame_rows.append(rec)
 
+            # Accumulate rows for the final production model (all periods).
+            # Keep price ranks AND any encoder embedding columns.
+            frow = {k: v for k, v in rec.items()
+                    if k.endswith("_rank") or k.startswith("emb_")}
+            frow["ticker"]      = ticker
+            frow["_period_idx"] = period
+            all_feature_rows.append(frow)
+            all_return_labels.append(1 if fwd_rets[ticker] >= median_ret else 0)
+            all_forward_returns.append(fwd_rets[ticker])
+
+        period_frames[period] = pd.DataFrame(frame_rows)
         logger.info(f"Period {period}: {len(common)} stocks | bench={np.mean(rv):.2%}")
 
-    # ── Train model on collected real-return data ──────────────────────────
+    # Encoder embedding columns (if any) are extra model features alongside the
+    # price ranks — extend rank_cols so the walk-forward steps and the final
+    # model both consume [price ranks + embeddings]. No-op when the encoder is
+    # off (no emb_* columns exist).
+    if period_frames:
+        emb_cols = sorted(
+            {c for fr in period_frames.values()
+             for c in fr.columns if c.startswith("emb_")},
+            key=lambda c: int(c.split("_")[1]) if c.split("_")[1].isdigit() else 0,
+        )
+        if emb_cols:
+            rank_cols = [f"{c}_rank" for c in PRICE_FEATURE_COLS] + emb_cols
+
+    # ── Phase 2: walk-forward scoring ──────────────────────────────────────
+    # wf_scored[t] = DataFrame(ticker, model_score, fwd_ret) — genuine OOS.
+    wf_scored: dict[int, pd.DataFrame] = {}
+    if train_model and period_frames:
+        periods_sorted = sorted(period_frames)
+        for t in periods_sorted:
+            train_ps = [p for p in periods_sorted if p <= t - embargo_periods - 1]
+            if len(train_ps) < min_train_periods:
+                continue
+
+            X_parts, y_parts = [], []
+            for p in train_ps:
+                fr  = period_frames[p]
+                med = fr["fwd_ret"].median()
+                X_parts.append(fr[rank_cols].values)
+                y_parts.append((fr["fwd_ret"].values >= med).astype(int))
+            X_tr = np.vstack(X_parts)
+            y_tr = np.concatenate(y_parts)
+            if y_tr.sum() < 2 or (len(y_tr) - y_tr.sum()) < 2:
+                continue
+
+            step = NUMKTEnsemble(cv_folds=5, lambda_reg=0.10, max_depth=5)
+            step.fit_pipelines(X_tr, y_tr, feature_names=rank_cols)
+
+            ft     = period_frames[t]
+            scores = step.predict_proba(ft[rank_cols].values)
+            wf_scored[t] = pd.DataFrame({
+                "ticker":     ft["ticker"].values,
+                "model_score": scores,
+                "fwd_ret":    ft["fwd_ret"].values,
+                "vol":        ft["vol"].values if "vol" in ft.columns else 0.20,
+            })
+
+    # ── Phase 3: metrics from walk-forward scores ──────────────────────────
+    holdout_ic      = None   # pooled Spearman over ALL walk-forward (OOS) rows
+    holdout_ic_mean = None   # mean of per-period walk-forward ICs == ic_mean
+    holdout_icir    = None
+    period_examples = []
+    prev_top_set    = set()
+
+    # ── Behavioural (co-equal) portfolios ──────────────────────────────────
+    # Same top-quintile selection as the equal-weight book, but:
+    #   sized      — conviction × inverse-volatility weights (size correctly:
+    #                more into high-conviction low-vol names, less into churny
+    #                high-vol ones), capped per name.
+    #   hysteresis — hold a name until its score falls below the period median,
+    #                instead of dropping it the instant it leaves the top
+    #                quintile (reduces overtrading / turnover).
+    sized_returns:    list[float] = []   # net of cost
+    sized_turnovers:  list[float] = []
+    prev_weights:     dict[str, float] = {}
+    hyst_returns:     list[float] = []   # net of cost
+    hyst_turnovers:   list[float] = []
+    hyst_hold:        set[str] = set()
+
+    wf_periods = sorted(wf_scored)
+    pooled_scores, pooled_rets = [], []
+    for t in wf_periods:
+        grp = wf_scored[t]
+        if len(grp) < 2 or grp["model_score"].nunique() < 2:
+            continue
+
+        benchmark_returns.append(bench_ret_by_period[t])
+        pooled_scores.extend(grp["model_score"].tolist())
+        pooled_rets.extend(grp["fwd_ret"].tolist())
+
+        ic, _ = spearmanr(grp["model_score"], grp["fwd_ret"])
+        if np.isfinite(ic):
+            period_ics.append(float(ic))
+
+        med_score = grp["model_score"].median()
+        top_ret   = grp.loc[grp["model_score"] >= med_score, "fwd_ret"].tolist()
+        bot_ret   = grp.loc[grp["model_score"] <  med_score, "fwd_ret"].tolist()
+        if top_ret and bot_ret:
+            period_hit_rates.append(1 if np.mean(top_ret) > np.mean(bot_ret) else 0)
+
+        n_top     = max(1, len(grp) // 5)
+        top_grp   = grp.nlargest(n_top, "model_score")
+        curr_set  = set(top_grp["ticker"].tolist())
+        gross_ret = float(top_grp["fwd_ret"].mean())
+
+        new_entries   = curr_set - prev_top_set if prev_top_set else curr_set
+        turnover_frac = len(new_entries) / max(len(curr_set), 1)
+        cost_drag     = turnover_frac * cost_bps / 10_000
+        portfolio_returns_gross.append(gross_ret)
+        portfolio_returns.append(gross_ret - cost_drag)
+
+        if prev_top_set:
+            turnovers.append(1 - len(curr_set & prev_top_set) / max(len(curr_set), 1))
+        prev_top_set = curr_set
+
+        # ── Sized book: conviction × inverse-vol over the top quintile ─────
+        tg = top_grp.copy()
+        conv = (tg["model_score"] - 0.5).clip(lower=0.0)
+        ivol = 1.0 / tg["vol"].clip(lower=0.05)
+        w    = (conv * ivol).to_numpy(dtype=float)
+        if w.sum() <= 0:                     # no conviction → equal weight
+            w = np.ones(len(tg))
+        w = w / w.sum()
+        w = np.minimum(w, 0.25)              # per-name cap
+        w = w / w.sum()
+        weights = dict(zip(tg["ticker"], w))
+        sized_gross = float((w * tg["fwd_ret"].to_numpy(dtype=float)).sum())
+        # Cost on traded notional vs previous weights (round-trip cost_bps).
+        names = set(weights) | set(prev_weights)
+        traded = sum(abs(weights.get(n, 0.0) - prev_weights.get(n, 0.0)) for n in names)
+        sized_returns.append(sized_gross - traded * cost_bps / 10_000)
+        sized_turnovers.append(traded / 2.0)
+        prev_weights = weights
+
+        # ── Hysteresis book: hold above the period median, enter on top ────
+        med_all   = grp["model_score"].median()
+        score_map = dict(zip(grp["ticker"], grp["model_score"]))
+        ret_map   = dict(zip(grp["ticker"], grp["fwd_ret"]))
+        kept      = {n for n in hyst_hold if score_map.get(n, 0.0) >= med_all}
+        new_hold  = kept | curr_set
+        new_hold  = {n for n in new_hold if n in ret_map}
+        if new_hold:
+            hg = float(np.mean([ret_map[n] for n in new_hold]))
+            h_new = new_hold - hyst_hold if hyst_hold else new_hold
+            h_turn = len(h_new) / max(len(new_hold), 1)
+            hyst_returns.append(hg - h_turn * cost_bps / 10_000)
+            if hyst_hold:
+                hyst_turnovers.append(
+                    1 - len(new_hold & hyst_hold) / max(len(new_hold), 1)
+                )
+        hyst_hold = new_hold
+
+    if period_ics:
+        holdout_ic_mean = round(float(np.mean(period_ics)), 4)
+    if len(period_ics) > 1:
+        holdout_icir = round(float(np.mean(period_ics) / (np.std(period_ics) + 1e-9)), 3)
+    if len(pooled_scores) > 2:
+        ic_val, _ = spearmanr(pooled_scores, pooled_rets)
+        holdout_ic = round(float(ic_val), 4) if np.isfinite(ic_val) else None
+
+    # ── Per-period examples: the most recent walk-forward periods ──────────
+    period_dates: dict[int, str] = {}
+    if price_series:
+        ref_prices = next(iter(price_series.values()))
+        for p_idx in range(n_periods):
+            si = p_idx * rebalance_days
+            ei = si + forward_days
+            if ei < len(ref_prices):
+                sd = ref_prices.index[si]
+                ed = ref_prices.index[ei]
+                period_dates[p_idx] = f"{sd.strftime('%b %Y')} → {ed.strftime('%b %Y')}"
+
+    for t in wf_periods[-6:]:
+        grp = wf_scored[t]
+        med = grp["fwd_ret"].median()
+        ex  = grp.assign(
+            pred_top=grp["model_score"] >= 0.5,
+            actual_top=grp["fwd_ret"] >= med,
+        )
+        ex["correct"] = ex["pred_top"] == ex["actual_top"]
+        ex = ex.sort_values("model_score", ascending=False)
+        period_examples.append({
+            "period":       int(t),
+            "date_range":   period_dates.get(int(t), f"Period {t}"),
+            "n_stocks":     len(ex),
+            "hit_rate_pct": round(float(ex["correct"].mean()) * 100, 1),
+            "stocks": [
+                {
+                    "ticker":            str(r["ticker"]),
+                    "model_score":       round(float(r["model_score"]) * 100, 1),
+                    "predicted_top":     bool(r["pred_top"]),
+                    "actual_return_pct": round(float(r["fwd_ret"]) * 100, 1),
+                    "actual_top":        bool(r["actual_top"]),
+                    "correct":           bool(r["correct"]),
+                }
+                for _, r in ex.iterrows()
+            ],
+        })
+
+    # ── Phase 4: train + save the final production model on ALL periods ────
+    # Independent of the walk-forward above, so it may safely include the
+    # current-snapshot rows (there is no holdout left for them to leak into).
+    # oof_ic / cv_accuracy below come from this model's own internal CV and
+    # are diagnostics only — the walk-forward IC is the ruler.
     training_info = {}
     if train_model and all_feature_rows:
         logger.info(
-            f"Training model on {len(all_feature_rows)} real-return observations "
-            f"from {n_periods} historical periods..."
+            f"Training final model on {len(all_feature_rows)} observations "
+            f"from {len(period_frames)} periods "
+            f"({len(wf_periods)} walk-forward OOS periods scored)..."
         )
         model = NUMKTEnsemble(cv_folds=5, lambda_reg=0.10, max_depth=5)
         model.fit_on_real_returns(
@@ -290,219 +481,40 @@ def run_backtest(
             return_labels   = all_return_labels,
             forward_returns = all_forward_returns,
             features_df     = features_df,
+            embargo         = 0,
+            include_snapshot = True,
         )
         model.save(model_name)
 
         # ── Monitoring: capture training baseline (additive, fully wrapped) ──
-        # Freezes feature/prediction distributions + training IC so live drift
-        # and IC degradation can be measured later. Never affects training.
         try:
             from monitoring import capture_training_baseline
             capture_training_baseline(model, features_df)
         except Exception:
             pass
 
-        # ── Score all periods with ML model, then compute every metric ──────
-        #
-        # Training periods → OOF predictions from cross-validation.
-        #   Each fold's test predictions were made by a model that never saw
-        #   those rows, so these are genuinely out-of-sample for the training
-        #   set — no information from the holdout data leaks in.
-        #
-        # Holdout periods → direct model.predict_proba() on data the model
-        #   has never seen at all.
-        #
-        # All IC, hit-rate, Sharpe, alpha, drawdown figures are computed from
-        # these ML scores — not from the old hand-coded factor formula.
-
-        holdout_ic      = None
-        period_examples = []
-        prev_top_set    = set()
-
-        if model.is_fitted:
-            try:
-                # ── 1. Training period scores (OOF) ───────────────────────
-                if (model._oof_proba is not None
-                        and len(model._oof_proba) == len(all_feature_rows)):
-                    train_scores = model._oof_proba
-                else:
-                    logger.warning(
-                        "OOF predictions unavailable — falling back to in-sample "
-                        "scores for training periods (metrics will be optimistic)"
-                    )
-                    X_tr = pd.DataFrame(all_feature_rows).fillna(0.5)
-                    for col in ["ticker", "_period_idx"]:
-                        if col in X_tr.columns:
-                            X_tr = X_tr.drop(columns=[col])
-                    for c in model._feature_names:
-                        if c not in X_tr.columns:
-                            X_tr[c] = 0.5
-                    train_scores = model.predict_proba(X_tr[model._feature_names].values)
-
-                # ── 2. Holdout period scores ───────────────────────────────
-                h_preds       = np.array([])
-                period_idxs_h = pd.Series([], dtype=int)
-                tickers_h     = pd.Series([], dtype=str)
-
-                if holdout_feature_rows:
-                    X_h = pd.DataFrame(holdout_feature_rows).fillna(0.5)
-                    period_idxs_h = (X_h.pop("_period_idx")
-                                     if "_period_idx" in X_h.columns
-                                     else pd.Series([0] * len(X_h)))
-                    tickers_h = (X_h.pop("ticker")
-                                 if "ticker" in X_h.columns
-                                 else pd.Series([""] * len(X_h)))
-                    for c in model._feature_names:
-                        if c not in X_h.columns:
-                            X_h[c] = 0.5
-                    h_preds = model.predict_proba(X_h[model._feature_names].values)
-
-                    # Holdout IC
-                    ic_val, _ = spearmanr(h_preds, holdout_forward_returns)
-                    holdout_ic = round(float(ic_val), 4) if np.isfinite(ic_val) else None
-                    logger.info(
-                        f"Holdout IC (out-of-sample, {len(holdout_feature_rows)} rows): "
-                        f"{holdout_ic}"
-                    )
-
-                    # Date lookup for period examples labels
-                    period_dates: dict[int, str] = {}
-                    ref_prices = next(iter(price_series.values()))
-                    for p_idx in range(n_periods):
-                        si = p_idx * rebalance_days
-                        ei = si + forward_days
-                        if ei < len(ref_prices):
-                            sd = ref_prices.index[si]
-                            ed = ref_prices.index[ei]
-                            period_dates[p_idx] = (
-                                f"{sd.strftime('%b %Y')} → {ed.strftime('%b %Y')}"
-                            )
-
-                    # Per-period prediction examples (holdout only)
-                    df_ex = pd.DataFrame({
-                        "period":        period_idxs_h.values,
-                        "ticker":        tickers_h.values,
-                        "model_score":   h_preds,
-                        "pred_top":      (h_preds >= 0.5),
-                        "actual_return": holdout_forward_returns,
-                        "actual_top":    np.array(holdout_return_labels, dtype=bool),
-                    })
-                    df_ex["correct"] = df_ex["pred_top"] == df_ex["actual_top"]
-
-                    for p_idx, grp_ex in df_ex.groupby("period"):
-                        grp_ex = grp_ex.sort_values("model_score", ascending=False)
-                        period_examples.append({
-                            "period":       int(p_idx),
-                            "date_range":   period_dates.get(int(p_idx), f"Period {p_idx}"),
-                            "n_stocks":     len(grp_ex),
-                            "hit_rate_pct": round(float(grp_ex["correct"].mean()) * 100, 1),
-                            "stocks": [
-                                {
-                                    "ticker":            str(row["ticker"]),
-                                    "model_score":       round(float(row["model_score"]) * 100, 1),
-                                    "predicted_top":     bool(row["pred_top"]),
-                                    "actual_return_pct": round(float(row["actual_return"]) * 100, 1),
-                                    "actual_top":        bool(row["actual_top"]),
-                                    "correct":           bool(row["correct"]),
-                                }
-                                for _, row in grp_ex.iterrows()
-                            ],
-                        })
-
-                # ── 3. Combined scored df for ALL periods ──────────────────
-                train_period_idxs  = [r.get("_period_idx", i)
-                                       for i, r in enumerate(all_feature_rows)]
-                train_tickers_list = [r.get("ticker", "") for r in all_feature_rows]
-
-                all_period_idxs_ml = train_period_idxs + list(period_idxs_h)
-                all_tickers_ml     = train_tickers_list + list(tickers_h)
-                all_ml_scores      = (np.concatenate([train_scores, h_preds])
-                                      if len(h_preds) else train_scores)
-                all_actual_rets_ml = all_forward_returns + holdout_forward_returns
-
-                df_ml = pd.DataFrame({
-                    "period":        all_period_idxs_ml,
-                    "ticker":        all_tickers_ml,
-                    "ml_score":      all_ml_scores,
-                    "actual_return": all_actual_rets_ml,
-                })
-
-                # ── 4. Per-period metrics from ML scores ───────────────────
-                for p_idx, grp in df_ml.groupby("period"):
-                    if p_idx not in bench_ret_by_period:
-                        continue
-
-                    benchmark_returns.append(bench_ret_by_period[p_idx])
-
-                    # IC (ML score vs actual return)
-                    if len(grp) > 1 and grp["ml_score"].nunique() > 1:
-                        ic, _ = spearmanr(grp["ml_score"], grp["actual_return"])
-                        if np.isfinite(ic):
-                            period_ics.append(float(ic))
-
-                    # Hit rate (does ML top half beat bottom half by avg return?)
-                    med_score = grp["ml_score"].median()
-                    top_ret   = grp.loc[grp["ml_score"] >= med_score, "actual_return"].tolist()
-                    bot_ret   = grp.loc[grp["ml_score"] <  med_score, "actual_return"].tolist()
-                    if top_ret and bot_ret:
-                        period_hit_rates.append(
-                            1 if np.mean(top_ret) > np.mean(bot_ret) else 0
-                        )
-
-                    # Top-quintile portfolio
-                    n_top     = max(1, len(grp) // 5)
-                    top_grp   = grp.nlargest(n_top, "ml_score")
-                    curr_set  = set(top_grp["ticker"].tolist())
-                    gross_ret = float(top_grp["actual_return"].mean())
-
-                    # Transaction cost: deduct cost_bps for each new entry
-                    new_entries   = curr_set - prev_top_set if prev_top_set else curr_set
-                    turnover_frac = len(new_entries) / max(len(curr_set), 1)
-                    cost_drag     = turnover_frac * cost_bps / 10_000
-                    net_ret       = gross_ret - cost_drag
-
-                    portfolio_returns_gross.append(gross_ret)
-                    portfolio_returns.append(net_ret)
-
-                    # Turnover
-                    if prev_top_set:
-                        turnovers.append(
-                            1 - len(curr_set & prev_top_set) / max(len(curr_set), 1)
-                        )
-                    prev_top_set = curr_set
-
-                ic_now = np.mean(period_ics) if period_ics else 0.0
-                logger.info(
-                    f"ML metrics: {len(portfolio_returns)} periods | "
-                    f"IC={ic_now:.4f} | holdout_IC={holdout_ic}"
-                )
-
-            except Exception as e:
-                logger.error(f"ML metrics computation failed: {e}", exc_info=True)
-
-        holdout_note = (
-            f"Holdout IC (out-of-sample): {holdout_ic:.4f}. "
-            if holdout_ic is not None else
-            "Holdout IC: n/a (too few periods to split). "
+        wf_note = (
+            f"Walk-forward IC (out-of-sample, {len(wf_periods)} periods): "
+            f"{holdout_ic_mean:.4f}. " if holdout_ic_mean is not None else
+            "Walk-forward IC: n/a (too few periods). "
         )
-
         training_info = {
             "trained":         True,
             "training_rows":   len(all_feature_rows),
-            "holdout_rows":    len(holdout_feature_rows),
+            "holdout_rows":    len(pooled_scores),
             "training_source": "real_returns",
             "cv_accuracy":     round(model.cv_accuracy, 4),
             "oof_ic":          round(model.cv_ic, 4),
             "holdout_ic":      holdout_ic,
+            "holdout_ic_mean": holdout_ic_mean,
+            "holdout_icir":    holdout_icir,
+            "wf_periods":      len(wf_periods),
             "period_examples": period_examples,
             "model_name":      model_name,
             "message": (
-                f"Model trained on {len(all_feature_rows)} observations "
-                f"({len(holdout_feature_rows)} held out). "
-                f"OOF CV accuracy: {model.cv_accuracy:.1%}. "
-                f"OOF IC: {model.cv_ic:.4f}. "
-                f"{holdout_note}"
-                f"Next analysis will use this model."
+                f"Model trained on {len(all_feature_rows)} observations. "
+                f"OOF CV accuracy: {model.cv_accuracy:.1%}. OOF IC (diag): "
+                f"{model.cv_ic:.4f}. {wf_note}Next analysis will use this model."
             )
         }
         logger.info(f"Model training complete. {training_info['message']}")
@@ -551,10 +563,27 @@ def run_backtest(
 
     avg_turn = float(np.mean(turnovers)) if turnovers else 0.5
 
+    # ── Behavioural portfolios (co-equal ruler) ────────────────────────────
+    # Risk-adjusted outcome of the sized + hysteresis books vs the naive
+    # equal-weight top quintile. These measure the "behavioural edge" (size
+    # correctly, trade less) the equal-weight IC book can't.
+    behavioural = {
+        "equal_weight": _port_stats(pa, ppy, rf, avg_turn),
+        "sized":        _port_stats(np.array(sized_returns), ppy, rf,
+                                    float(np.mean(sized_turnovers)) if sized_turnovers else None),
+        "hysteresis":   _port_stats(np.array(hyst_returns), ppy, rf,
+                                    float(np.mean(hyst_turnovers)) if hyst_turnovers else None),
+        "note": ("Sized = conviction × inverse-vol weighting; hysteresis = hold "
+                 "until score < median (fewer trades). Net of "
+                 f"{cost_bps}bps round-trip costs."),
+    }
+
     logger.info(
         f"BACKTEST COMPLETE | periods={len(pa)} | IC={ic_mean:.4f} | "
-        f"Sharpe={sharpe:.3f} | Hit={hit_rate:.1%} | "
-        f"Alpha gross={ann_alpha:.2%}, net={ann_alpha_net:.2%} ({cost_bps}bps)"
+        f"Sharpe eq={sharpe:.2f}/sized={behavioural['sized'].get('sharpe')}/"
+        f"hyst={behavioural['hysteresis'].get('sharpe')} | "
+        f"turn eq={avg_turn:.0%}/hyst={behavioural['hysteresis'].get('avg_turnover_pct')} | "
+        f"Alpha net={ann_alpha_net:.2%} ({cost_bps}bps)"
     )
 
     return {
@@ -577,7 +606,33 @@ def run_backtest(
         "avg_monthly_turnover": round(avg_turn*100, 1),
         "effective_lookback_years": effective_lookback_yrs,
         "interpretation":       _interpret(hit_rate, ic_mean, sharpe, max_dd, ann_alpha_net),
+        "behavioural":          behavioural,
         "training":             training_info,
+    }
+
+
+def _port_stats(returns: np.ndarray, ppy: float, rf: float,
+                avg_turnover: float | None) -> dict:
+    """Annualised return / Sharpe / max-drawdown / Calmar / turnover for a
+    per-period net-return series. Used to compare the behavioural books."""
+    if returns is None or len(returns) == 0:
+        return {"n_periods": 0, "ann_return_pct": None, "sharpe": None,
+                "max_drawdown_pct": None, "calmar": None, "avg_turnover_pct": None}
+    r      = np.asarray(returns, dtype=float)
+    ann    = float(np.prod(1 + r) ** (ppy / len(r)) - 1)
+    exc    = r - rf
+    sharpe = float(np.mean(exc) / (np.std(exc) + 1e-9) * np.sqrt(ppy))
+    cum    = np.cumprod(1 + r)
+    rm     = np.maximum.accumulate(cum)
+    max_dd = float(np.min((cum - rm) / (rm + 1e-9)))
+    calmar = round(ann / abs(max_dd), 3) if max_dd < -1e-6 else None
+    return {
+        "n_periods":        len(r),
+        "ann_return_pct":   round(ann * 100, 2),
+        "sharpe":           round(sharpe, 3),
+        "max_drawdown_pct": round(max_dd * 100, 2),
+        "calmar":           calmar,
+        "avg_turnover_pct": round(avg_turnover * 100, 1) if avg_turnover is not None else None,
     }
 
 
