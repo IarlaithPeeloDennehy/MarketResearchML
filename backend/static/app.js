@@ -764,7 +764,7 @@ async function runAnalysis(){
       const diff=Math.round((new Date(br.next_earnings_date)-Date.now())/(1000*60*60*24));
       if(diff>=0&&diff<=90)daysToEarnings=diff;
     }
-    return{...local,t:br.ticker,n:br.name||local.n||br.ticker,s:br.sector||local.s||'Unknown',m:br.market||local.m||'US',p:br.last_price??null,score:br.composite_score/100,fundScore:br.fundamental_score/100,instPct:br.inst_ownership_pct,insiderPct:br.insider_ownership_pct,ff:mapFactorProfile(br.factor_profile),signal:br.signal,buyReasons:br.buy_reasons||[],pe:br.fundamentals?.pe_ratio??local.pe,roe:br.fundamentals?.roe!=null?br.fundamentals.roe/100:local.roe,mg:br.fundamentals?.net_margin!=null?br.fundamentals.net_margin/100:local.mg,de:br.fundamentals?.debt_equity??local.de,dy:br.fundamentals?.dividend_yield!=null?br.fundamentals.dividend_yield/100:local.dy,rg:br.fundamentals?.revenue_growth!=null?br.fundamentals.revenue_growth/100:local.rg,m12:br.fundamentals?.mom_12m!=null?br.fundamentals.mom_12m/100:local.m12,beta:br.fundamentals?.beta??local.beta,betaNote:br.beta_note||null,mc:br.market_cap_bn??local.mc,isLive:true,analystBuy:br.analyst_buy??null,analystHold:br.analyst_hold??null,analystSell:br.analyst_sell??null,sizeTier:br.size_tier??null,sizeNote:br.size_note??null,signalStability:br.signal_stability??null,stabilityNote:br.stability_note??null,actionNote:br.action_note??null,daysToEarnings};
+    return{...local,t:br.ticker,n:br.name||local.n||br.ticker,s:br.sector||local.s||'Unknown',m:br.market||local.m||'US',p:br.last_price??null,score:br.composite_score/100,fundScore:br.fundamental_score/100,instPct:br.inst_ownership_pct,insiderPct:br.insider_ownership_pct,ff:mapFactorProfile(br.factor_profile),signal:br.signal,buyReasons:br.buy_reasons||[],pe:br.fundamentals?.pe_ratio??local.pe,roe:br.fundamentals?.roe!=null?br.fundamentals.roe/100:local.roe,mg:br.fundamentals?.net_margin!=null?br.fundamentals.net_margin/100:local.mg,de:br.fundamentals?.debt_equity??local.de,dy:br.fundamentals?.dividend_yield!=null?br.fundamentals.dividend_yield/100:local.dy,rg:br.fundamentals?.revenue_growth!=null?br.fundamentals.revenue_growth/100:local.rg,m12:br.fundamentals?.mom_12m!=null?br.fundamentals.mom_12m/100:local.m12,beta:br.fundamentals?.beta??local.beta,betaNote:br.beta_note||null,mc:br.market_cap_bn??local.mc,isLive:true,analystBuy:br.analyst_buy??null,analystHold:br.analyst_hold??null,analystSell:br.analyst_sell??null,sizeTier:br.size_tier??null,sizeNote:br.size_note??null,signalStability:br.signal_stability??null,stabilityNote:br.stability_note??null,actionNote:br.action_note??null,hysteresisNote:br.hysteresis_note??null,hysteresisApplied:!!br.hysteresis_applied,priorSignal:br.prior_signal??null,daysToEarnings};
   });
 
   updateBackendBadge(true);
@@ -995,9 +995,10 @@ function openDetail(ticker){
       ${reasons.length?`<ul class="v-reasons">${reasons.map(rs=>`<li class="v-reason"><span class="v-icon">${buy?'✓':'⚠'}</span><span>${rs}</span></li>`).join('')}</ul>`:''}
     </div>
 
-    ${(r&&(r.actionNote||r.sizeTier||r.signalStability))?`
+    ${(r&&(r.actionNote||r.sizeTier||r.signalStability||r.hysteresisNote))?`
     <div class="discipline-box" style="border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:1.1rem;background:rgba(255,255,255,0.02)">
       <div style="font-size:10px;letter-spacing:0.05em;color:var(--text3);text-transform:uppercase;margin-bottom:6px">Position guidance</div>
+      ${r.hysteresisNote?`<div style="font-size:11px;color:${r.hysteresisApplied?'var(--teal)':'var(--text2)'};margin-bottom:5px;line-height:1.5">${r.hysteresisApplied?'↩ ':''}${esc(r.hysteresisNote)}</div>`:''}
       ${(r.sizeTier&&r.sizeTier!=='—')?`<div style="font-size:11px;color:var(--text2);margin-bottom:4px">Suggested size: <strong>${r.sizeTier}</strong>${r.sizeNote?` · ${esc(r.sizeNote)}`:''}</div>`:''}
       ${r.actionNote?`<div style="font-size:11px;color:var(--text2);margin-bottom:4px">${esc(r.actionNote)}</div>`:''}
       ${(r.signalStability==='Borderline'&&r.stabilityNote)?`<div style="font-size:11px;color:var(--amber);margin-bottom:4px">⚠ ${esc(r.stabilityNote)}</div>`:''}

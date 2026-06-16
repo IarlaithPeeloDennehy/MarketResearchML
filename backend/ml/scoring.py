@@ -110,6 +110,51 @@ def _action_note(signal: str) -> str:
     }.get(signal, "")
 
 
+def _apply_hysteresis(
+    signal: str,
+    composite: float,
+    prior: dict | None,
+    thresholds: dict | None,
+) -> tuple[str, str | None, bool]:
+    """Stateful hold discipline: dampen sell signals for names the user was
+    recently shown as a BUY, so a small dip right after a buy doesn't trigger a
+    churn-inducing SELL (the behaviour-gap killer is selling winners early).
+
+    Only ever SOFTENS a SELL → HOLD, and only within a grace band just below the
+    hold threshold; it never manufactures a BUY and never hardens a signal.
+    Returns (signal, note, overridden).
+    """
+    if not prior:
+        return signal, None, False
+
+    prior_sig = prior.get("signal")
+    if prior_sig not in ("BUY", "STRONG BUY"):
+        return signal, None, False
+
+    when       = f" on {prior['date']}" if prior.get("date") else " recently"
+    hold_floor = (thresholds.get("hold", 0.38) if thresholds else 0.38)
+    grace      = hold_floor - 0.05   # how far below HOLD we still extend grace
+
+    if signal == "SELL" and composite >= grace:
+        return "HOLD", (
+            f"You rated this a BUY{when}. The score has softened but hasn't broken "
+            f"down — consider holding rather than selling on this move."
+        ), True
+
+    if signal == "HOLD":
+        return "HOLD", (
+            f"You flagged this BUY{when}; now HOLD — thesis intact, no action needed."
+        ), False
+
+    if signal == "SELL":   # genuinely below the grace floor
+        return "SELL", (
+            f"Was a BUY{when}; the score has since deteriorated materially — the "
+            f"thesis has weakened."
+        ), False
+
+    return signal, None, False   # still BUY / STRONG BUY → unchanged
+
+
 # Relative position-sizing tiers (NOT % allocations, NOT financial advice).
 # Drives "size correctly": conviction sets the base tier, then high volatility /
 # beta downsizes it so users don't oversize their churny, riskiest names.
@@ -257,6 +302,7 @@ def score_universe(
     raw_data: dict,
     profile: str,
     risk: str,
+    prior_signals: dict | None = None,
 ) -> list[dict]:
     """
     Scores every stock in the universe and returns a ranked list.
@@ -311,6 +357,14 @@ def score_universe(
 
         thresholds     = getattr(model, "_signal_thresholds", None) or None
         signal         = _get_signal(composite, thresholds)
+
+        # Stateful hold discipline: if the user was recently shown this name as a
+        # BUY, soften a fresh SELL into a HOLD (don't churn out of a small dip).
+        prior = (prior_signals or {}).get(ticker)
+        signal, hysteresis_note, hysteresis_applied = _apply_hysteresis(
+            signal, composite, prior, thresholds
+        )
+
         factor_profile = _factor_profile(row)
         reasons        = _build_reasons(row, signal, inst_pct, insider_pct)
 
@@ -338,6 +392,10 @@ def score_universe(
             "signal_stability":    stability,        # Firm | Borderline
             "stability_note":      stability_note,
             "action_note":         action_note,
+            "prior_signal":        (prior or {}).get("signal"),
+            "prior_date":          (prior or {}).get("date"),
+            "hysteresis_note":     hysteresis_note,
+            "hysteresis_applied":  hysteresis_applied,
             "inst_ownership_pct":  round(inst_pct * 100, 1) if inst_pct is not None else None,
             "insider_ownership_pct": round(insider_pct * 100, 1) if insider_pct is not None else None,
             "beta_note":           "vs S&P 500 — may not reflect local market beta" if market in ("UK", "IE") else None,
