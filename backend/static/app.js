@@ -1985,7 +1985,54 @@ const Portfolio = (() => {
     renderHoldings(d.holdings||[]);
   }
 
-  return { add, remove, run, save, onShow };
+  // ── ticker typeahead (reuses the Finnhub /api/search endpoint) ──────────
+  const _searchEl=()=>document.getElementById('pfSearchResults');
+
+  const _doSearch=debounce(async q=>{
+    const el=_searchEl(); if(!el)return;
+    q=(q||'').trim();
+    if(q.length<1){ el.style.display='none'; el.innerHTML=''; return; }
+    const key='pf:'+q.toLowerCase();
+    let hits=SearchCache.get(key);
+    if(!hits){
+      el.style.display='block';
+      el.innerHTML='<div class="sp-search-spinner">Searching…</div>';
+      try{
+        const r=await fetch(`/api/search?q=${encodeURIComponent(q)}&types=stock`);
+        if(!r.ok)throw new Error('http');
+        const d=await r.json();
+        hits=(d.results||[]).slice(0,12);
+        SearchCache.set(key,hits);
+      }catch(e){ el.innerHTML='<div class="sp-search-spinner" style="color:var(--red)">Search unavailable — type the ticker directly.</div>'; return; }
+    }
+    _renderResults(hits,q);
+  },300);
+
+  function _renderResults(hits,q){
+    const el=_searchEl(); if(!el)return;
+    el.style.display='block';
+    if(!hits.length){ el.innerHTML='<div class="sp-search-spinner">No matches — you can still type the ticker directly.</div>'; return; }
+    el.innerHTML=hits.map(h=>{
+      const held=holdings.some(x=>x.ticker===String(h.ticker).toUpperCase());
+      // onmousedown+preventDefault fires before the input blur, so the pick registers.
+      return `<div class="sp-search-result-row" onmousedown="event.preventDefault();Portfolio.pick('${esc(h.ticker)}')">
+        <span class="sp-sr-ticker">${highlightMatch(h.ticker,q)}</span>
+        <span class="sp-sr-name">${highlightMatch(h.name||'',q)}</span>
+        ${h.exchange?`<span class="pf-sr-exch">${esc(h.exchange)}</span>`:''}
+        ${held?'<span class="pf-sr-held">added ✓</span>':''}
+      </div>`;
+    }).join('');
+  }
+
+  function search(q){ _doSearch(q); }
+  function hideSearch(){ const el=_searchEl(); if(el)setTimeout(()=>{ el.style.display='none'; },150); }
+  function pick(ticker){
+    const ti=document.getElementById('pfTicker'); if(ti)ti.value=String(ticker).toUpperCase();
+    const el=_searchEl(); if(el){ el.style.display='none'; el.innerHTML=''; }
+    add();
+  }
+
+  return { add, remove, run, save, onShow, search, hideSearch, pick };
 })();
 
 /* ═══════════════════ SAVES MODULE ═══════════════════ */
