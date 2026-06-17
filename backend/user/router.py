@@ -14,6 +14,7 @@ User-facing data endpoints.
 All endpoints require an authenticated session (get_current_user dependency).
 """
 
+import re
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -45,6 +46,7 @@ class PreferencesOut(BaseModel):
     default_risk:     str
     lookback_years:   int
     default_tickers:  Optional[List[str]]
+    portfolio:        Optional[List[dict]]
     updated_at:       datetime
 
 
@@ -53,10 +55,38 @@ class PreferencesIn(BaseModel):
     default_risk:     Optional[str]   = None
     lookback_years:   Optional[int]   = None
     default_tickers:  Optional[List[str]] = None
+    portfolio:        Optional[List[dict]] = None
 
 
 _VALID_PROFILES = {"quality", "growth", "value", "momentum", "income"}
 _VALID_RISKS    = {"low", "medium", "high"}
+_TICKER_RE      = re.compile(r"^(?=[A-Z0-9.\-]*[A-Z])[A-Z0-9.\-]{1,15}$")
+
+
+def _clean_portfolio(holdings: List[dict]) -> List[dict]:
+    """Validate + normalise holdings: [{ticker, weight?}]. Raises 400 on bad input."""
+    if len(holdings) > 40:
+        raise HTTPException(400, "Maximum 40 holdings")
+    cleaned, seen = [], set()
+    for h in holdings:
+        if not isinstance(h, dict):
+            raise HTTPException(400, "Each holding must be an object")
+        ticker = str(h.get("ticker", "")).upper().strip()
+        if not _TICKER_RE.match(ticker):
+            raise HTTPException(400, f"Invalid ticker: {ticker!r}")
+        if ticker in seen:
+            continue
+        seen.add(ticker)
+        weight = h.get("weight")
+        if weight is not None:
+            try:
+                weight = float(weight)
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"weight for {ticker} must be a number")
+            if not (0 <= weight <= 100):
+                raise HTTPException(400, f"weight for {ticker} must be between 0 and 100")
+        cleaned.append({"ticker": ticker, "weight": weight})
+    return cleaned
 
 
 @router.get("/preferences", response_model=PreferencesOut)
@@ -76,6 +106,7 @@ def get_preferences(
         default_risk=prefs.default_risk,
         lookback_years=prefs.lookback_years,
         default_tickers=prefs.default_tickers,
+        portfolio=prefs.portfolio,
         updated_at=prefs.updated_at,
     )
 
@@ -94,6 +125,7 @@ def update_preferences(
         raise HTTPException(400, "lookback_years must be between 1 and 10")
     if body.default_tickers is not None and len(body.default_tickers) > 40:
         raise HTTPException(400, "Maximum 40 default tickers")
+    cleaned_portfolio = _clean_portfolio(body.portfolio) if body.portfolio is not None else None
 
     prefs = db.get(UserPreferences, current_user.id)
     if prefs is None:
@@ -104,6 +136,7 @@ def update_preferences(
     if body.default_risk     is not None: prefs.default_risk     = body.default_risk
     if body.lookback_years   is not None: prefs.lookback_years   = body.lookback_years
     if body.default_tickers  is not None: prefs.default_tickers  = body.default_tickers
+    if cleaned_portfolio     is not None: prefs.portfolio        = cleaned_portfolio
     prefs.updated_at = datetime.now(timezone.utc)
 
     _log(db, current_user.id, "preferences_updated", body.model_dump(exclude_none=True))
@@ -115,6 +148,7 @@ def update_preferences(
         default_risk=prefs.default_risk,
         lookback_years=prefs.lookback_years,
         default_tickers=prefs.default_tickers,
+        portfolio=prefs.portfolio,
         updated_at=prefs.updated_at,
     )
 

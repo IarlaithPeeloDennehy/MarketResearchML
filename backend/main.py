@@ -64,10 +64,14 @@ from ml.reference_panel import load_reference_panel
 from ml.model import NUMKTEnsemble
 from ml.backtest import run_backtest
 from ml.scoring import score_universe
+from ml.diversification import (
+    score_candidates, recommend_additions, portfolio_composition,
+    concentration_flags, normalize_sector,
+)
 from ml.insights import build_snapshot, load_snapshot, is_stale
 from auth.router import router as auth_router
 from auth.dependencies import get_current_user
-from auth.models import User, UserSession, ActivityEvent
+from auth.models import User, UserSession, ActivityEvent, UserPreferences
 from user.router import router as user_router
 from db.session import get_db
 from db.base import engine
@@ -583,6 +587,16 @@ class BacktestRequest(BaseModel):
     rebalance_months: int = 3
     train_model:      bool = True    # train on real returns after backtest
 
+class PortfolioHolding(BaseModel):
+    ticker: str
+    weight: Optional[float] = None
+
+class PortfolioRequest(BaseModel):
+    holdings:       List[PortfolioHolding] = []
+    profile:        str = "quality"
+    risk:           str = "medium"
+    lookback_years: int = 5
+
 
 # ── Frontend ───────────────────────────────────────────────────────────────
 
@@ -795,6 +809,104 @@ async def analyse(request: Request, req: AnalyseRequest, current_user: User = De
     except Exception as e:
         logger.error(f"Analysis error: {e}", exc_info=True)
         raise HTTPException(500, "Analysis failed. Check server logs for details.")
+
+
+@app.post("/portfolio/recommendations")
+async def portfolio_recommendations(
+    request: Request, req: PortfolioRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Score a user's holdings normally AND recommend diversifying additions
+    that fill under-represented sectors. Holdings may be supplied in the body
+    or fall back to the saved portfolio preference."""
+    holdings = req.holdings
+
+    # Fall back to the saved portfolio when the body has none.
+    if not holdings:
+        try:
+            _db = next(get_db())
+            try:
+                prefs = _db.get(UserPreferences, current_user.id)
+                if prefs and prefs.portfolio:
+                    holdings = [PortfolioHolding(**h) for h in prefs.portfolio]
+            finally:
+                _db.close()
+        except Exception:
+            pass
+    if not holdings:
+        raise HTTPException(400, "No portfolio holdings provided.")
+
+    tickers    = _validate_tickers([h.ticker for h in holdings])
+    weight_map = {h.ticker.upper(): h.weight for h in holdings}
+
+    try:
+        raw_data, _ = await fetch_multiple_stocks(tickers, req.lookback_years + 1)
+        if not raw_data:
+            raise HTTPException(502, "Could not fetch data for the holdings.")
+
+        features_df = build_features(raw_data, profile=req.profile)
+        if features_df.empty:
+            raise HTTPException(422, "Not enough data to analyse the holdings.")
+        try:
+            features_df = apply_reference_ranks(features_df, load_reference_panel())
+        except Exception as exc:
+            logger.warning(f"Reference-rank de-biasing skipped (non-fatal): {exc}")
+
+        # Use the trained model if available; otherwise model.fit() trains on the
+        # price cache (which pulls in the cached anchors), giving a sound model
+        # for both the holdings and the candidate universe.
+        model = _model_cache.get("__trained__")
+        if model is None:
+            model = NUMKTEnsemble(cv_folds=5, lambda_reg=0.10, max_depth=5)
+            model.fit(features_df)
+
+        # Prior signals → hysteresis on the holdings too (same as /analyse).
+        prior_signals = {}
+        try:
+            _db = next(get_db())
+            try:
+                prior_signals = load_prior_signals(_db, current_user.id, tickers)
+            finally:
+                _db.close()
+        except Exception:
+            pass
+
+        scored = score_universe(
+            model, features_df, raw_data, req.profile, req.risk,
+            prior_signals=prior_signals,
+        )
+
+        # Composition + concentration flags from canonical sectors.
+        holdings_for_comp = []
+        for r in scored:
+            t   = r.get("ticker")
+            sec = normalize_sector(r.get("sector"), t)
+            r["canonical_sector"] = sec
+            holdings_for_comp.append(
+                {"ticker": t, "sector": sec, "weight": weight_map.get(str(t).upper())}
+            )
+        composition = portfolio_composition(holdings_for_comp)
+        flags       = concentration_flags(composition)
+
+        # Diversifying additions from the scored anchor universe (excl. holdings).
+        candidates  = score_candidates(model)
+        suggestions = recommend_additions(composition, candidates, held=tickers, n=5)
+
+        return {
+            "status":       "ok",
+            "timestamp":    datetime.now(timezone.utc).isoformat(),
+            "holdings":     scored,
+            "composition":  composition,
+            "flags":        flags,
+            "suggestions":  suggestions,
+            "n_holdings":   len(scored),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Portfolio recommendation error: {e}", exc_info=True)
+        raise HTTPException(500, "Portfolio analysis failed. Check server logs.")
 
 
 # ── Backtest + train ───────────────────────────────────────────────────────
