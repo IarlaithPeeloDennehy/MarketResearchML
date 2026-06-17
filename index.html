@@ -189,7 +189,10 @@
       <div class="w-card ac2"><div class="w-num">ML</div>Ensemble</div>
       <div class="w-card ac3"><div class="w-num">BUY</div>Signals</div>
     </div>
-    <button class="start-btn" onclick="showPage('select')">START ANALYSIS ↗</button>
+    <div class="w-cta-row">
+      <button class="start-btn" onclick="showPage('select')">START ANALYSIS ↗</button>
+      <button class="start-btn start-btn-alt" onclick="showPage('portfolio')">MY PORTFOLIO →</button>
+    </div>
   </div>
 
   <!-- Saved analyses panel — hidden until user is logged in -->
@@ -200,6 +203,48 @@
     </div>
     <div class="saved-list" id="savedList">
       <div class="saved-empty">Log in to see your saved analyses.</div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ PORTFOLIO SCREEN ═══════════════════ -->
+  <div id="portfolioScreen" style="display:none">
+    <button class="back-link" onclick="showPage('landing')">← Home</button>
+    <div class="sec-title">My Portfolio
+      <span style="font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:400;color:var(--text3)">— enter your holdings to score them and find diversifying additions</span>
+    </div>
+
+    <div class="pf-input-card">
+      <div class="pf-input-row">
+        <input id="pfTicker" class="pf-input" placeholder="Ticker (e.g. AAPL)" autocomplete="off"
+               onkeydown="if(event.key==='Enter')Portfolio.add()">
+        <input id="pfWeight" class="pf-input pf-input-weight" type="number" min="0" max="100"
+               placeholder="Weight % (optional)">
+        <button class="pf-add-btn" onclick="Portfolio.add()">ADD</button>
+      </div>
+      <div id="pfHoldingsChips" class="sp-selected-list">
+        <span style="font-size:11px;color:var(--text3)">No holdings yet. Add at least 3 to analyse.</span>
+      </div>
+      <div class="pf-actions">
+        <button class="run-btn" id="pfRunBtn" onclick="Portfolio.run()" disabled>ANALYSE PORTFOLIO ↗</button>
+        <button class="save-bar-btn auth-hidden" id="pfSaveBtn" onclick="Portfolio.save()">SAVE PORTFOLIO</button>
+        <span class="save-bar-msg" id="pfSaveMsg"></span>
+      </div>
+      <p class="pf-note">Weights are optional — leave blank and holdings are treated as equal-weight.
+        Guidance only, not financial advice.</p>
+    </div>
+
+    <div id="pfResults" style="display:none">
+      <div class="pf-flags" id="pfFlags"></div>
+      <div class="sec-title">Sector Allocation</div>
+      <div class="pf-comp" id="pfComposition"></div>
+      <div class="sec-title">Suggested Additions
+        <span style="font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:400;color:var(--text3)">— diversifying, BUY-rated candidates</span>
+      </div>
+      <div class="pf-suggestions" id="pfSuggestions"></div>
+      <div class="sec-title">Your Holdings — Scored
+        <span style="font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:400;color:var(--text3)">— with size &amp; hold guidance</span>
+      </div>
+      <div class="table-scroll-wrap"><div class="rec-table" id="pfHoldingsTable"></div></div>
     </div>
   </div>
 
@@ -218,6 +263,11 @@
     <div id="quantPanelSlot"></div>
     <div class="insight-box" id="insightBox"></div>
     <div class="sec-title">Full Rankings <span style="font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:400;color:var(--text3)">— tap any row for breakdown</span></div>
+    <div class="rank-legend">
+      <span class="rl-item"><span class="rl-chip">Large</span> suggested relative size (conviction ÷ volatility)</span>
+      <span class="rl-item"><span class="rl-tilde">~</span> borderline signal — may flip on noise</span>
+      <span class="rl-item"><span class="rl-arrow">↩</span> hold-discipline note (hover a row)</span>
+    </div>
     <div class="table-scroll-wrap">
       <div class="rec-table" id="recTable"></div>
     </div>
