@@ -244,10 +244,11 @@ _CANDIDATE_CACHE: dict = {"key": None, "ts": 0.0, "rows": []}
 _CANDIDATE_TTL = 1800.0   # seconds
 
 
-def score_candidates(model) -> list[dict]:
+def score_candidates(model=None) -> list[dict]:
     """Score the cached anchor universe with the trained model, tagged with
     canonical sector. Cached briefly (keyed by model.trained_at) to avoid
-    recompute per request. Returns [] gracefully on any failure."""
+    recompute per request. When no fitted model is supplied, trains one from the
+    anchor price cache. Returns [] gracefully on any failure."""
     try:
         import pandas as pd
         from .model import PRICE_DIR
@@ -285,6 +286,14 @@ def score_candidates(model) -> list[dict]:
 
         features_df = build_features(raw_data)
         features_df = apply_reference_ranks(features_df, load_reference_panel())
+
+        # No production model handy → train one on the anchor cache so the
+        # builder still works (model.fit pulls in the cached anchors itself).
+        if model is None or not getattr(model, "is_fitted", False):
+            from .model import NUMKTEnsemble
+            model = NUMKTEnsemble()
+            model.fit(features_df)
+
         rows = score_universe(model, features_df, raw_data, "quality", "medium")
         # Authoritative sector tag (don't trust whatever build_features carried).
         for r in rows:
@@ -295,3 +304,51 @@ def score_candidates(model) -> list[dict]:
     except Exception as exc:
         logger.warning(f"score_candidates failed (non-fatal): {exc}")
         return []
+
+
+def build_portfolio(model=None, size: int = 15, max_per_sector: int = 3) -> dict:
+    """Construct a diversified portfolio of the model's strongest current picks.
+
+    Scores the whole anchor universe, then greedily takes the highest-conviction
+    names subject to a per-sector cap so the result spans multiple sectors. If
+    the cap leaves too few names (small/imbalanced universe) it relaxes to fill
+    up to `size`. Returns equal-weighted picks + sector composition.
+    """
+    cands = score_candidates(model)
+    if not cands:
+        return {"portfolio": [], "composition": {}, "size": 0, "equal_weight_pct": 0}
+
+    ranked = sorted(cands, key=lambda c: c.get("composite_score", 0.0), reverse=True)
+
+    picks, per = [], {}
+    for c in ranked:
+        sec = c.get("sector", "Unknown")
+        if per.get(sec, 0) >= max_per_sector:
+            continue
+        picks.append(c)
+        per[sec] = per.get(sec, 0) + 1
+        if len(picks) >= size:
+            break
+    if len(picks) < size:   # relax the cap to reach the target count
+        have = {c.get("ticker") for c in picks}
+        for c in ranked:
+            if c.get("ticker") in have:
+                continue
+            picks.append(c)
+            if len(picks) >= size:
+                break
+
+    w = round(100.0 / len(picks), 1)
+    comp: dict[str, float] = {}
+    out: list[dict] = []
+    for c in picks:
+        sec = c.get("sector", "Unknown")
+        comp[sec] = round(comp.get(sec, 0.0) + 100.0 / len(picks), 1)
+        sig = c.get("signal")
+        out.append({
+            **c,
+            "weight": w,
+            "rationale": (f"{sig} · {sec} — among the model's strongest current picks"
+                          if sig else f"{sec} — model pick"),
+        })
+    return {"portfolio": out, "composition": comp, "size": len(out), "equal_weight_pct": w}

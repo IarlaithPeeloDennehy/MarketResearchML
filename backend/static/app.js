@@ -1923,8 +1923,8 @@ const Portfolio = (() => {
     }).join('');
   }
 
-  function renderComposition(comp){
-    const el=document.getElementById('pfComposition'); if(!el)return;
+  function renderComposition(comp, elId='pfComposition'){
+    const el=document.getElementById(elId); if(!el)return;
     const rows=Object.entries(comp||{}).sort((a,b)=>b[1]-a[1]);
     if(!rows.length){ el.innerHTML=''; return; }
     el.innerHTML=rows.map(([sec,pct])=>{
@@ -2032,7 +2032,58 @@ const Portfolio = (() => {
     add();
   }
 
-  return { add, remove, run, save, onShow, search, hideSearch, pick };
+  // ── model-built portfolio ──────────────────────────────────────────────
+  let builtPicks=[];
+
+  async function build(){
+    const btn=document.getElementById('pfBuildBtn'); const orig=btn?btn.textContent:'';
+    if(btn){ btn.disabled=true; btn.textContent='BUILDING…'; }
+    const res=await callBackend('/portfolio/build',{});
+    if(btn){ btn.disabled=false; btn.textContent=orig; }
+    if(!res.ok||!res.data||!(res.data.portfolio||[]).length){
+      const msg=res.status===401?'Log in to build a portfolio.'
+        :res.status===503?'Model is warming up its universe — try again in a moment.'
+        :'Couldn’t build a portfolio right now.';
+      _showToast(msg, res.status===401?'info':'err');
+      if(res.status===401&&window.Auth)Auth.openModal();
+      return;
+    }
+    renderBuilt(res.data);
+  }
+
+  function renderBuilt(d){
+    builtPicks=(d.portfolio||[]).map(p=>p.ticker);
+    document.getElementById('pfBuilt').style.display='block';
+    renderComposition(d.composition,'pfBuiltComp');
+    const el=document.getElementById('pfBuiltList');
+    if(el){
+      el.innerHTML=(d.portfolio||[]).map(s=>{
+        const c=SECTOR_COLORS[s.sector]||'#555a64';
+        const score=s.composite_score!=null?s.composite_score.toFixed(0):'—';
+        const tier=(s.size_tier&&s.size_tier!=='—'&&s.size_tier!=='Avoid')?`<span class="pf-size pf-size-${s.size_tier.toLowerCase()}">${s.size_tier}</span>`:'';
+        return `<div class="pf-sug">
+          <div class="pf-sug-top">
+            <span class="pf-sug-tick">${esc(s.ticker)}</span>
+            <span class="sig-pill ${pillCls(s.signal)}">${s.signal}</span>
+            <span class="pf-sug-score">${score}%</span>
+          </div>
+          <span class="pf-sug-sec" style="border-color:${c};color:${c}">${esc(s.sector)}</span> ${tier}
+          <div class="pf-sug-why">${esc(s.rationale||'')}</div>
+        </div>`;
+      }).join('');
+    }
+    document.getElementById('pfBuilt').scrollIntoView({behavior:'smooth',block:'start'});
+  }
+
+  function adoptBuilt(){
+    if(!builtPicks.length)return;
+    holdings=builtPicks.map(t=>({ticker:String(t).toUpperCase(), weight:null}));
+    renderChips(); _setRunState();
+    _showToast('Portfolio loaded into your holdings — Save it or Analyse it.', 'info');
+    document.querySelector('.pf-input-card')?.scrollIntoView({behavior:'smooth',block:'start'});
+  }
+
+  return { add, remove, run, save, onShow, search, hideSearch, pick, build, adoptBuilt };
 })();
 
 /* ═══════════════════ SAVES MODULE ═══════════════════ */

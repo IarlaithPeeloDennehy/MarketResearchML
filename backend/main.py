@@ -66,7 +66,7 @@ from ml.backtest import run_backtest
 from ml.scoring import score_universe
 from ml.diversification import (
     score_candidates, recommend_additions, portfolio_composition,
-    concentration_flags, normalize_sector,
+    concentration_flags, normalize_sector, build_portfolio,
 )
 from ml.insights import build_snapshot, load_snapshot, is_stale
 from auth.router import router as auth_router
@@ -907,6 +907,33 @@ async def portfolio_recommendations(
     except Exception as e:
         logger.error(f"Portfolio recommendation error: {e}", exc_info=True)
         raise HTTPException(500, "Portfolio analysis failed. Check server logs.")
+
+
+@app.post("/portfolio/build")
+async def portfolio_build(request: Request, current_user: User = Depends(get_current_user)):
+    """Build a diversified ~15-stock portfolio from the model's strongest current
+    picks across the scoreable universe (the cached anchor names). Conviction
+    picks, sector-capped for diversification — model view, not financial advice."""
+    try:
+        model  = _model_cache.get("__trained__")
+        # Scoring (and possibly training) the whole universe is CPU-bound — keep
+        # it off the event loop.
+        result = await asyncio.to_thread(build_portfolio, model, 15, 3)
+        if not result.get("portfolio"):
+            raise HTTPException(
+                503, "Portfolio builder isn't ready yet — the model is still "
+                     "warming up its universe. Try again in a moment."
+            )
+        return {
+            "status":    "ok",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            **result,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Portfolio build error: {e}", exc_info=True)
+        raise HTTPException(500, "Portfolio build failed. Check server logs.")
 
 
 # ── Backtest + train ───────────────────────────────────────────────────────

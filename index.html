@@ -10,7 +10,7 @@
 <link rel="icon" href="/static/favicon.png" sizes="32x32" type="image/png">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
-<link rel="stylesheet" href="/static/app.css?v=20260618">
+<link rel="stylesheet" href="/static/app.css?v=20260619">
 </head>
 <body>
 
@@ -239,6 +239,26 @@
         Guidance only, not financial advice.</p>
     </div>
 
+    <div class="pf-build-card">
+      <div>
+        <div class="pf-build-title">Not sure where to start?</div>
+        <div class="pf-build-text">Let the model build a diversified ~15-stock portfolio from its strongest current picks across the scoreable universe (liquid US large/mid-caps).</div>
+      </div>
+      <button class="pf-build-btn" id="pfBuildBtn" onclick="Portfolio.build()">✨ BUILD ME A PORTFOLIO</button>
+    </div>
+
+    <div id="pfBuilt" style="display:none">
+      <div class="sec-title">Model-Built Portfolio
+        <span style="font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:400;color:var(--text3)">— diversified, the model's strongest picks for the months ahead</span>
+      </div>
+      <div class="pf-built-bar">
+        <button class="pf-add-btn" onclick="Portfolio.adoptBuilt()">USE AS MY PORTFOLIO →</button>
+        <span class="pf-built-note">Equal-weighted · model conviction, not financial advice. Past performance doesn't predict future results.</span>
+      </div>
+      <div class="pf-comp" id="pfBuiltComp"></div>
+      <div class="pf-suggestions" id="pfBuiltList"></div>
+    </div>
+
     <div id="pfResults" style="display:none">
       <div class="pf-flags" id="pfFlags"></div>
       <div class="sec-title">Sector Allocation</div>
@@ -318,7 +338,7 @@
 </div>
 
 
-<script src="/static/app.js?v=20260618"></script>
+<script src="/static/app.js?v=20260619"></script>
 
 
 <!-- ═══════════════════ AUTH MODAL ═══════════════════ -->

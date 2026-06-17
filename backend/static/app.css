@@ -1378,3 +1378,13 @@ mark.search-hl{background:rgba(132,204,22,0.22);color:var(--primary-bright);bord
 .pf-search-results{position:absolute;top:100%;left:0;right:0;z-index:120;margin-top:4px;background:var(--surface);border:1px solid var(--line);border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,0.6);max-height:300px;overflow-y:auto;display:none;padding:4px}
 .pf-sr-exch{font-size:9px;color:var(--text3);font-family:'JetBrains Mono',monospace;flex-shrink:0}
 .pf-sr-held{font-size:9px;color:var(--primary);font-family:'JetBrains Mono',monospace;flex-shrink:0}
+
+/* Model-built portfolio */
+.pf-build-card{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;background:linear-gradient(135deg,rgba(132,204,22,0.08),rgba(48,216,200,0.06));border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:22px}
+.pf-build-title{font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px}
+.pf-build-text{font-size:11px;color:var(--text2);line-height:1.5;max-width:560px}
+.pf-build-btn{background:var(--primary);color:#0a0a0a;border:none;border-radius:8px;padding:11px 20px;font-weight:600;font-size:12px;letter-spacing:.04em;cursor:pointer;white-space:nowrap}
+.pf-build-btn:hover{filter:brightness(1.1)}
+.pf-build-btn:disabled{opacity:.6;cursor:default}
+.pf-built-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.pf-built-note{font-size:10px;color:var(--text3);line-height:1.4}
