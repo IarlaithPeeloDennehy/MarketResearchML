@@ -10,7 +10,7 @@
 <link rel="icon" href="/static/favicon.png" sizes="32x32" type="image/png">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
-<link rel="stylesheet" href="/static/app.css?v=20260617">
+<link rel="stylesheet" href="/static/app.css?v=20260618">
 </head>
 <body>
 
@@ -215,8 +215,14 @@
 
     <div class="pf-input-card">
       <div class="pf-input-row">
-        <input id="pfTicker" class="pf-input" placeholder="Ticker (e.g. AAPL)" autocomplete="off"
-               onkeydown="if(event.key==='Enter')Portfolio.add()">
+        <div class="pf-search-wrap">
+          <input id="pfTicker" class="pf-input" placeholder="Search company or ticker (e.g. Apple or AAPL)" autocomplete="off"
+                 oninput="Portfolio.search(this.value)"
+                 onfocus="Portfolio.search(this.value)"
+                 onblur="Portfolio.hideSearch()"
+                 onkeydown="if(event.key==='Enter'){Portfolio.add();}else if(event.key==='Escape'){Portfolio.hideSearch();}">
+          <div class="pf-search-results" id="pfSearchResults"></div>
+        </div>
         <input id="pfWeight" class="pf-input pf-input-weight" type="number" min="0" max="100"
                placeholder="Weight % (optional)">
         <button class="pf-add-btn" onclick="Portfolio.add()">ADD</button>
@@ -312,7 +318,7 @@
 </div>
 
 
-<script src="/static/app.js?v=20260617"></script>
+<script src="/static/app.js?v=20260618"></script>
 
 
 <!-- ═══════════════════ AUTH MODAL ═══════════════════ -->
