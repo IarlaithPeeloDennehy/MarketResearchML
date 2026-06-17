@@ -65,10 +65,13 @@ function showPage(name){
   document.getElementById('welcomeScreen').style.display=(name==='landing')?'':'none';
   document.getElementById('selectScreen').style.display=(name==='select')?'block':'none';
   document.getElementById('resultsScreen').style.display=(name==='results')?'block':'none';
+  const pf=document.getElementById('portfolioScreen');
+  if(pf)pf.style.display=(name==='portfolio')?'block':'none';
   document.querySelector('main.main').style.display=(name==='select')?'none':'';
   const sp=document.getElementById('savedPanel');
   if(sp)sp.style.display=(name==='landing')?'':'none';
   if(name==='select'){renderStockGrid('');renderSelectedList();}
+  if(name==='portfolio'){Portfolio.onShow();}
 }
 
 /* ═══ SEARCH UTILITIES ═══ */
@@ -878,7 +881,8 @@ function renderResults(R){
       const analystStr=(s.analystBuy!=null||s.analystHold!=null||s.analystSell!=null)
         ?`<div class="analyst-row"><span class="ab">${s.analystBuy??0}B</span> · <span class="ah">${s.analystHold??0}H</span> · <span class="as">${s.analystSell??0}S</span></div>`
         :`<div class="analyst-row" style="color:var(--text3)">—</div>`;
-      return`<div class="rec-row ${buyRow}" data-ticker="${s.t}">
+      const _guid=(s.hysteresisNote||s.actionNote||'')+(s.sizeNote?` · ${s.sizeNote}`:'');
+      return`<div class="rec-row ${buyRow}" data-ticker="${s.t}"${_guid?` title="${esc(_guid)}"`:''}>
         <span class="rt-ticker">${s.t} <span class="sr-mkt ${mc}" style="font-size:8px;padding:1px 4px">${s.m}</span>${s.isLive?'<span style="font-size:8px;color:var(--teal);margin-left:3px" title="Live">●</span>':''}</span>
         <span class="rt-name">${esc(s.n)}${isBuy(s.signal)?'<span class="buy-tag">BUY</span>':''}${earningsBadge}</span>
         <span><div class="rt-num">${(s.score*100).toFixed(0)}%</div><div class="conf-bar"><div class="conf-fill" style="width:${(s.score*100).toFixed(0)}%;background:${s.score>0.65?'var(--green)':s.score>0.45?'var(--amber)':'var(--red)'}"></div></div></span>
@@ -1837,6 +1841,151 @@ const Prefs = (() => {
   }
 
   return { loadAndApply, saveDefaults };
+})();
+
+/* ═══ PORTFOLIO (diversification view) ═══ */
+const Portfolio = (() => {
+  let holdings = [];            // [{ticker, weight|null}]
+  let loadedSaved = false;
+
+  const SECTOR_COLORS = {
+    "Technology":"#6080f5","Communication Services":"#a585f0","Healthcare":"#34d27b",
+    "Financials":"#30d8c8","Consumer Discretionary":"#f0a030","Consumer Staples":"#84CC16",
+    "Industrials":"#9aa0aa","Energy":"#f05454","Utilities":"#5ad1e0","Materials":"#d4a05a",
+    "Real Estate":"#c060c0","Unknown":"#555a64",
+  };
+  const mktCls = m => m==='UK'?'mkt-uk':m==='IE'?'mkt-ie':'mkt-us';
+
+  function _setRunState(){
+    const btn=document.getElementById('pfRunBtn');
+    if(btn)btn.disabled = holdings.length < 3;
+  }
+
+  function add(){
+    const ti=document.getElementById('pfTicker'), wi=document.getElementById('pfWeight');
+    let t=(ti.value||'').toUpperCase().trim();
+    if(!/^(?=[A-Z0-9.\-]*[A-Z])[A-Z0-9.\-]{1,15}$/.test(t)){ _showToast('Enter a valid ticker','err'); return; }
+    if(holdings.length>=40){ _showToast('Maximum 40 holdings','err'); return; }
+    if(holdings.some(h=>h.ticker===t)){ _showToast(t+' already added','info'); ti.value=''; return; }
+    let w=wi.value===''?null:parseFloat(wi.value);
+    if(w!==null && (!isFinite(w)||w<0||w>100)){ _showToast('Weight must be 0–100','err'); return; }
+    holdings.push({ticker:t, weight:w});
+    ti.value=''; wi.value=''; ti.focus();
+    renderChips(); _setRunState();
+  }
+  function remove(t){ holdings=holdings.filter(h=>h.ticker!==t); renderChips(); _setRunState(); }
+
+  function renderChips(){
+    const el=document.getElementById('pfHoldingsChips'); if(!el)return;
+    if(!holdings.length){ el.innerHTML='<span style="font-size:11px;color:var(--text3)">No holdings yet. Add at least 3 to analyse.</span>'; return; }
+    el.innerHTML=holdings.map(h=>`<span class="sp-chip">${h.ticker}${h.weight!=null?` <span style="color:var(--text3)">${h.weight}%</span>`:''}<button onclick="Portfolio.remove('${h.ticker}')" aria-label="remove">×</button></span>`).join('');
+  }
+
+  async function onShow(){
+    if(loadedSaved) { renderChips(); _setRunState(); return; }
+    loadedSaved=true;
+    try{
+      const r=await fetch('/user/preferences',{credentials:'include'});
+      if(r.ok){ const p=await r.json(); if(Array.isArray(p.portfolio)&&p.portfolio.length){ holdings=p.portfolio.map(h=>({ticker:h.ticker,weight:h.weight??null})); } }
+    }catch{}
+    renderChips(); _setRunState();
+  }
+
+  async function save(){
+    const msg=document.getElementById('pfSaveMsg');
+    try{
+      const r=await fetch('/user/preferences',{method:'PUT',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({portfolio:holdings})});
+      if(msg){ msg.textContent=r.ok?'Saved ✓':'Save failed'; msg.style.color=r.ok?'var(--primary)':'#f87171'; setTimeout(()=>msg.textContent='',2000); }
+    }catch{ if(msg){ msg.textContent='Save failed'; } }
+  }
+
+  async function run(){
+    if(holdings.length<3){ _showToast('Add at least 3 holdings','err'); return; }
+    const btn=document.getElementById('pfRunBtn'); const orig=btn?btn.textContent:'';
+    if(btn){ btn.disabled=true; btn.textContent='ANALYSING…'; }
+    const res=await callBackend('/portfolio/recommendations',{holdings});
+    if(btn){ btn.textContent=orig; btn.disabled=holdings.length<3; }
+    if(!res.ok||!res.data){
+      _showToast(res.status===401?'Log in to analyse your portfolio.':'Portfolio analysis failed.', res.status===401?'info':'err');
+      if(res.status===401&&window.Auth)Auth.openModal();
+      return;
+    }
+    render(res.data);
+  }
+
+  function renderFlags(flags){
+    const el=document.getElementById('pfFlags'); if(!el)return;
+    if(!flags||!flags.length){ el.innerHTML='<div class="pf-flag pf-flag-ok">✓ Your portfolio looks reasonably diversified across sectors.</div>'; return; }
+    el.innerHTML=flags.map(f=>{
+      const cls=f.type==='over'?'pf-flag-over':'pf-flag-gap';
+      const icon=f.type==='over'?'⚠':'○';
+      return `<div class="pf-flag ${cls}">${icon} ${esc(f.message)}</div>`;
+    }).join('');
+  }
+
+  function renderComposition(comp){
+    const el=document.getElementById('pfComposition'); if(!el)return;
+    const rows=Object.entries(comp||{}).sort((a,b)=>b[1]-a[1]);
+    if(!rows.length){ el.innerHTML=''; return; }
+    el.innerHTML=rows.map(([sec,pct])=>{
+      const c=SECTOR_COLORS[sec]||'#555a64';
+      return `<div class="pf-comp-row">
+        <span class="pf-comp-lbl">${esc(sec)}</span>
+        <span class="pf-comp-bar"><span class="pf-comp-fill" style="width:${Math.min(pct,100)}%;background:${c}"></span></span>
+        <span class="pf-comp-pct">${pct.toFixed(0)}%</span>
+      </div>`;
+    }).join('');
+  }
+
+  function renderSuggestions(sugs){
+    const el=document.getElementById('pfSuggestions'); if(!el)return;
+    if(!sugs||!sugs.length){ el.innerHTML='<div style="font-size:11px;color:var(--text3)">No diversifying additions to suggest — your sector spread already covers the gaps.</div>'; return; }
+    el.innerHTML=sugs.map(s=>{
+      const c=SECTOR_COLORS[s.sector]||'#555a64';
+      const score=s.composite_score!=null?s.composite_score.toFixed(0):'—';
+      return `<div class="pf-sug">
+        <div class="pf-sug-top">
+          <span class="pf-sug-tick">${esc(s.ticker)}</span>
+          <span class="sig-pill ${pillCls(s.signal)}">${s.signal}</span>
+          <span class="pf-sug-score">${score}%</span>
+        </div>
+        <span class="pf-sug-sec" style="border-color:${c};color:${c}">${esc(s.sector)}</span>
+        <div class="pf-sug-why">${esc(s.rationale||'')}</div>
+      </div>`;
+    }).join('');
+  }
+
+  function renderHoldings(rows){
+    const el=document.getElementById('pfHoldingsTable'); if(!el)return;
+    el.innerHTML=`<div class="pf-hhead"><span>Ticker</span><span>Sector</span><span>Score</span><span>Signal</span><span>Size</span><span>Guidance</span></div>`+
+      rows.map(r=>{
+        const t=r.ticker, mc=mktCls(r.market);
+        const sec=r.canonical_sector||r.sector||'—';
+        const score=r.composite_score!=null?r.composite_score.toFixed(0):'—';
+        const sizeTier=r.size_tier&&r.size_tier!=='—'?r.size_tier:'';
+        const guid=r.hysteresis_note||r.action_note||'';
+        const guidColor=r.hysteresis_applied?'var(--teal)':'var(--text3)';
+        const sizeBadge=sizeTier?`<span class="pf-size pf-size-${sizeTier.toLowerCase()}">${sizeTier}</span>`:'<span style="color:var(--text3)">—</span>';
+        return `<div class="pf-hrow">
+          <span class="pf-h-tick">${esc(t)} <span class="sr-mkt ${mc}" style="font-size:8px;padding:1px 4px">${r.market||'US'}</span></span>
+          <span class="pf-h-sec">${esc(sec)}</span>
+          <span class="pf-h-score">${score}%</span>
+          <span><span class="sig-pill ${pillCls(r.signal)}">${r.signal}</span></span>
+          <span>${sizeBadge}</span>
+          <span class="pf-h-guid" style="color:${guidColor}">${esc(guid)}</span>
+        </div>`;
+      }).join('');
+  }
+
+  function render(d){
+    document.getElementById('pfResults').style.display='block';
+    renderFlags(d.flags);
+    renderComposition(d.composition);
+    renderSuggestions(d.suggestions);
+    renderHoldings(d.holdings||[]);
+  }
+
+  return { add, remove, run, save, onShow };
 })();
 
 /* ═══════════════════ SAVES MODULE ═══════════════════ */

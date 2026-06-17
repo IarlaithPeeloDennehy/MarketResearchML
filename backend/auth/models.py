@@ -70,6 +70,9 @@ class UserPreferences(SQLModel, table=True):
     lookback_years:  int = Field(default=5)
     # Stored as JSON array, e.g. ["AAPL", "MSFT", "GOOG"]
     default_tickers: Optional[list] = Field(default=None, sa_column=Column(JSON))
+    # Current holdings for the diversification view, e.g.
+    # [{"ticker": "AAPL", "weight": 25.0}, {"ticker": "JNJ", "weight": null}]
+    portfolio:       Optional[list] = Field(default=None, sa_column=Column(JSON))
     updated_at:      datetime = Field(default_factory=_now)
 
 

@@ -1309,3 +1309,65 @@ mark.search-hl{background:rgba(132,204,22,0.22);color:var(--primary-bright);bord
   .stock-browser{padding:16px}
   .stock-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
 }
+/* ═══ PORTFOLIO VIEW ═══ */
+.w-cta-row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.start-btn-alt{background:transparent;border:1px solid var(--line);color:var(--text2)}
+.start-btn-alt:hover{border-color:var(--primary);color:var(--primary)}
+
+.pf-input-card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:22px}
+.pf-input-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+.pf-input{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 12px;color:var(--text);font-family:'JetBrains Mono',monospace;font-size:13px;flex:1;min-width:160px}
+.pf-input:focus{outline:none;border-color:var(--primary)}
+.pf-input-weight{flex:0 0 150px;min-width:120px}
+.pf-add-btn{background:var(--primary);color:#0a0a0a;border:none;border-radius:8px;padding:9px 18px;font-weight:600;font-size:12px;cursor:pointer;letter-spacing:.04em}
+.pf-add-btn:hover{filter:brightness(1.1)}
+.pf-actions{display:flex;gap:12px;align-items:center;margin-top:14px;flex-wrap:wrap}
+.pf-note{font-size:10px;color:var(--text3);margin-top:10px;line-height:1.5}
+
+.pf-flags{display:flex;flex-direction:column;gap:8px;margin-bottom:8px}
+.pf-flag{font-size:12px;padding:9px 13px;border-radius:8px;line-height:1.5;border:1px solid var(--line)}
+.pf-flag-over{background:var(--red-dim);border-color:var(--red);color:var(--red)}
+.pf-flag-gap{background:var(--amber-dim);border-color:var(--amber);color:var(--amber)}
+.pf-flag-ok{background:var(--green-dim);border-color:var(--green);color:var(--green)}
+
+.pf-comp{display:flex;flex-direction:column;gap:7px;margin-bottom:8px}
+.pf-comp-row{display:flex;align-items:center;gap:10px}
+.pf-comp-lbl{flex:0 0 150px;font-size:11px;color:var(--text2);font-family:'JetBrains Mono',monospace}
+.pf-comp-bar{flex:1;height:9px;background:rgba(255,255,255,0.05);border-radius:5px;overflow:hidden}
+.pf-comp-fill{display:block;height:100%;border-radius:5px}
+.pf-comp-pct{flex:0 0 42px;text-align:right;font-size:11px;color:var(--text2);font-family:'JetBrains Mono',monospace}
+
+.pf-suggestions{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-bottom:8px}
+.pf-sug{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:13px}
+.pf-sug-top{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.pf-sug-tick{font-weight:600;font-size:15px;color:var(--text)}
+.pf-sug-score{margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text2)}
+.pf-sug-sec{display:inline-block;font-size:9px;padding:2px 7px;border:1px solid;border-radius:4px;margin-bottom:7px}
+.pf-sug-why{font-size:11px;color:var(--text2);line-height:1.5}
+
+.pf-hhead,.pf-hrow{display:grid;grid-template-columns:130px 150px 64px 110px 70px 1fr;gap:8px;align-items:center;padding:9px 12px}
+.pf-hhead{font-size:9px;letter-spacing:.06em;color:var(--text3);text-transform:uppercase;border-bottom:1px solid var(--line)}
+.pf-hrow{border-bottom:1px solid rgba(255,255,255,0.04);font-size:12px}
+.pf-hrow:hover{background:rgba(255,255,255,0.02)}
+.pf-h-tick{font-weight:600;color:var(--text)}
+.pf-h-sec{color:var(--text2);font-size:11px}
+.pf-h-score{font-family:'JetBrains Mono',monospace;color:var(--text2)}
+.pf-h-guid{font-size:10px;line-height:1.4}
+.pf-size{font-size:9px;padding:2px 7px;border-radius:4px;font-weight:600}
+.pf-size-large{background:var(--green-dim);color:var(--green)}
+.pf-size-medium{background:var(--teal-dim,rgba(48,216,200,0.12));color:var(--teal)}
+.pf-size-small{background:var(--amber-dim);color:var(--amber)}
+.pf-size-avoid{background:var(--red-dim);color:var(--red)}
+
+@media(max-width:680px){
+  .pf-hhead,.pf-hrow{grid-template-columns:90px 1fr 50px 80px;}
+  .pf-hhead span:nth-child(5),.pf-hhead span:nth-child(6),
+  .pf-hrow span:nth-child(5),.pf-hrow span:nth-child(6){display:none}
+}
+
+/* Full-rankings guidance legend */
+.rank-legend{display:flex;flex-wrap:wrap;gap:14px;margin:-4px 0 12px;font-size:10px;color:var(--text3)}
+.rank-legend .rl-item{display:flex;align-items:center;gap:5px}
+.rl-chip{font-size:8px;padding:1px 5px;border-radius:3px;background:rgba(255,255,255,0.06);color:var(--text3)}
+.rl-tilde{color:var(--amber);font-weight:700}
+.rl-arrow{color:var(--teal);font-weight:700}
